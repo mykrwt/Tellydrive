@@ -1,0 +1,155 @@
+workflows:
+  # Builds a debug-signed release APK for every pull request opened against
+  # this repo, so you can grab an installable APK straight from the
+  # Codemagic build page without doing anything locally.
+  #
+  # Why "debug-signed": TellyBase has no upload keystore checked into this
+  # repo (and shouldn't — keystores are secrets, never committed to git).
+  # Without a real release keystore, Android's Gradle plugin falls back to
+  # signing the release build with the debug key, which produces a perfectly
+  # installable APK for testing on your own devices/emulators; it just can't
+  # be published to the Play Store as-is. See the "Signing a real release"
+  # note at the bottom of this file for how to add your own keystore later.
+  pr-android-apk:
+    name: TellyBase - PR Android APK
+    max_build_duration: 60
+    instance_type: linux_x2
+
+    triggering:
+      events:
+        - pull_request
+      branch_patterns:
+        - pattern: "*"
+          include: true
+          source: true
+      cancel_previous_builds: true
+
+    environment:
+      flutter: stable
+      # This repo intentionally does not commit android/ or ios/ platform
+      # folders (they're regenerated below with `flutter create .` so they
+      # always match whatever Flutter/AGP/Xcode version Codemagic's image
+      # has). If TellyBase ever needs its own Google Play package name
+      # instead of the com.example.tellybase default, set it here.
+      vars:
+        PACKAGE_NAME: "com.example.tellybase"
+
+    scripts:
+      - name: Generate missing Android/iOS platform folders
+        script: |
+          set -e
+          # `flutter create .` never overwrites files that already exist
+          # (our lib/, pubspec.yaml, etc. are left untouched) — it only
+          # fills in whatever platform scaffolding (android/, ios/, ...)
+          # is currently missing from a fresh checkout.
+          flutter create . \
+            --project-name tellybase \
+            --org "$(echo "$PACKAGE_NAME" | sed 's/\.[^.]*$//')" \
+            --platforms=android
+
+      - name: Apply TellyBase's required Android manifest permissions
+        script: |
+          set -e
+          # Merges ci/android_manifest_additions.xml (INTERNET, media read,
+          # WorkManager, notification permissions — see that file for the
+          # full list and why each one is needed) into the just-generated
+          # android/app/src/main/AndroidManifest.xml.
+          python3 ci/apply_platform_config.py
+
+      - name: Get Flutter packages
+        script: |
+          set -e
+          flutter pub get
+
+      - name: Flutter analyze
+        script: |
+          flutter analyze --no-fatal-infos
+        ignore_failure: true
+
+      - name: Build release APK
+        script: |
+          set -e
+          flutter build apk --release \
+            --build-name=1.0.0 \
+            --build-number="$PROJECT_BUILD_NUMBER"
+
+    artifacts:
+      - build/app/outputs/flutter-apk/*.apk
+      - build/app/outputs/mapping/**/mapping.txt
+      - flutter_drive.log
+
+    publishing:
+      email:
+        recipients:
+          - user@example.com
+        notify:
+          success: true
+          failure: true
+
+  # Same build, but triggered manually or on pushes to the branch this
+  # session tracks, useful for grabbing a fresh APK without opening a PR.
+  manual-android-apk:
+    name: TellyBase - Manual Android APK
+    max_build_duration: 60
+    instance_type: linux_x2
+
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: "arena/*"
+          include: true
+
+    environment:
+      flutter: stable
+      vars:
+        PACKAGE_NAME: "com.example.tellybase"
+
+    scripts:
+      - name: Generate missing Android/iOS platform folders
+        script: |
+          set -e
+          flutter create . \
+            --project-name tellybase \
+            --org "$(echo "$PACKAGE_NAME" | sed 's/\.[^.]*$//')" \
+            --platforms=android
+
+      - name: Apply TellyBase's required Android manifest permissions
+        script: |
+          set -e
+          python3 ci/apply_platform_config.py
+
+      - name: Get Flutter packages
+        script: |
+          set -e
+          flutter pub get
+
+      - name: Build release APK
+        script: |
+          set -e
+          flutter build apk --release \
+            --build-name=1.0.0 \
+            --build-number="$PROJECT_BUILD_NUMBER"
+
+    artifacts:
+      - build/app/outputs/flutter-apk/*.apk
+
+# -----------------------------------------------------------------------
+# Signing a real release (optional, for publishing beyond your own device)
+# -----------------------------------------------------------------------
+# 1. Generate a keystore locally:
+#      keytool -genkey -v -keystore tellybase.keystore -storetype JKS \
+#              -keyalg RSA -keysize 2048 -validity 10000 -alias tellybase
+# 2. In Codemagic: Team settings > codemagic.yaml settings > Code signing
+#    identities > Android keystores > upload tellybase.keystore, give it a
+#    reference name (e.g. "tellybase_keystore").
+# 3. Add `android_signing: [tellybase_keystore]` under this workflow's
+#    `environment:` section.
+# 4. In android/app/build.gradle.kts, wire signingConfigs.release to read
+#    the CM_KEYSTORE_PATH / CM_KEYSTORE_PASSWORD / CM_KEY_ALIAS /
+#    CM_KEY_PASSWORD environment variables Codemagic injects automatically
+#    (see https://docs.codemagic.io/yaml-quick-start/building-a-flutter-app/
+#    for the exact snippet) and switch buildTypes.release.signingConfig
+#    from signingConfigs.debug to signingConfigs.release.
+# Until then, every APK from this file is signed with the Flutter debug
+# key, which Android/Play Store will not accept as a production upload.

@@ -1,0 +1,38 @@
+# Flutter/Dart generated files and caches.
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+
+# Platform folders are intentionally NOT committed to this repo. They are
+# regenerated on every CI build via `flutter create .` (see codemagic.yaml
+# and ci/apply_platform_config.py) so they always match whatever
+# Flutter/AGP/Xcode version the build machine has, instead of drifting out
+# of sync with a checked-in copy. If you generate them locally to run/debug
+# on your own machine, they'll be ignored here too.
+/android/
+/ios/
+/linux/
+/macos/
+/windows/
+/web/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage/
+
+# Symbolication/local secrets
+key.properties
+*.jks
+*.keystore

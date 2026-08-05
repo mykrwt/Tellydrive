@@ -12,37 +12,49 @@ export interface UserOverview {
 }
 
 export function userOverview(userId: string): UserOverview {
-  const wp = getUserWithPlan(userId);
-  const d = db();
-  const files = d
-    .prepare(
-      "SELECT COUNT(*) AS c, COALESCE(SUM(size_bytes),0) AS s, SUM(is_image) AS imgs, SUM(is_video) AS vids FROM files WHERE user_id=? AND deleted_at IS NULL",
-    )
-    .get(userId) as {
-    c: number;
-    s: number;
-    imgs: number | null;
-    vids: number | null;
-  };
-  const folders = d
-    .prepare(
-      "SELECT COUNT(*) AS c FROM folders WHERE user_id=? AND deleted_at IS NULL",
-    )
-    .get(userId) as { c: number };
-  const month = d
-    .prepare(
-      "SELECT COUNT(*) AS c FROM files WHERE user_id=? AND deleted_at IS NULL AND strftime('%Y-%m', created_at)=strftime('%Y-%m','now')",
-    )
-    .get(userId) as { c: number };
-  return {
-    storageUsedBytes: files.s,
-    storageLimitBytes: wp?.plan.storage_bytes ?? 0,
-    totalFiles: files.c,
-    totalFolders: folders.c,
-    thisMonthUploads: month.c,
-    images: files.imgs ?? 0,
-    videos: files.vids ?? 0,
-  };
+  try {
+    const wp = getUserWithPlan(userId);
+    const d = db();
+    const files = d
+      .prepare(
+        "SELECT COUNT(*) AS c, COALESCE(SUM(size_bytes),0) AS s, SUM(is_image) AS imgs, SUM(is_video) AS vids FROM files WHERE user_id=? AND deleted_at IS NULL",
+      )
+      .get(userId) as {
+      c: number;
+      s: number;
+      imgs: number | null;
+      vids: number | null;
+    };
+    const folders = d
+      .prepare(
+        "SELECT COUNT(*) AS c FROM folders WHERE user_id=? AND deleted_at IS NULL",
+      )
+      .get(userId) as { c: number };
+    const month = d
+      .prepare(
+        "SELECT COUNT(*) AS c FROM files WHERE user_id=? AND deleted_at IS NULL AND strftime('%Y-%m', created_at)=strftime('%Y-%m','now')",
+      )
+      .get(userId) as { c: number };
+    return {
+      storageUsedBytes: files?.s ?? 0,
+      storageLimitBytes: wp?.plan.storage_bytes ?? 10 * 1024 * 1024 * 1024,
+      totalFiles: files?.c ?? 0,
+      totalFolders: folders?.c ?? 0,
+      thisMonthUploads: month?.c ?? 0,
+      images: files?.imgs ?? 0,
+      videos: files?.vids ?? 0,
+    };
+  } catch {
+    return {
+      storageUsedBytes: 0,
+      storageLimitBytes: 10 * 1024 * 1024 * 1024,
+      totalFiles: 0,
+      totalFolders: 0,
+      thisMonthUploads: 0,
+      images: 0,
+      videos: 0,
+    };
+  }
 }
 
 export interface AdminStats {
@@ -78,9 +90,7 @@ export function adminStats(): AdminStats {
     )
     .get() as { c: number; s: number; imgs: number; vids: number };
   const users = d
-    .prepare(
-      "SELECT COUNT(*) AS c FROM users",
-    )
+    .prepare("SELECT COUNT(*) AS c FROM users")
     .get() as { c: number };
   const active = d
     .prepare(
@@ -100,7 +110,9 @@ export function adminStats(): AdminStats {
       "SELECT COUNT(*) AS c FROM files WHERE deleted_at IS NULL AND strftime('%Y-%m', created_at)=strftime('%Y-%m','now')",
     )
     .get() as { c: number };
-  const folders = d.prepare("SELECT COUNT(*) AS c FROM folders WHERE deleted_at IS NULL").get() as { c: number };
+  const folders = d
+    .prepare("SELECT COUNT(*) AS c FROM folders WHERE deleted_at IS NULL")
+    .get() as { c: number };
 
   const daily = d
     .prepare(
@@ -125,9 +137,9 @@ export function adminStats(): AdminStats {
 
   const perUser = d
     .prepare(
-      `SELECT u.id, u.name, u.email, p.name AS plan, u.storage_used_bytes AS storageUsed, u.is_suspended,
+      `SELECT u.id, u.name, u.email, COALESCE(p.name, 'Free') AS plan, u.storage_used_bytes AS storageUsed, u.is_suspended,
               (SELECT COUNT(*) FROM files f WHERE f.user_id=u.id AND f.deleted_at IS NULL) AS files
-       FROM users u JOIN plans p ON p.id=u.plan_id ORDER BY u.created_at DESC`,
+       FROM users u LEFT JOIN plans p ON p.id=u.plan_id ORDER BY u.created_at DESC`,
     )
     .all() as {
     id: string;
@@ -140,19 +152,19 @@ export function adminStats(): AdminStats {
   }[];
 
   return {
-    totalStorageBytes: files.s,
-    totalFiles: files.c,
-    totalImages: files.imgs,
-    totalVideos: files.vids,
-    totalFolders: folders.c,
-    totalUsers: users.c,
-    activeUsers: active.c,
-    suspendedUsers: suspended.c,
-    todayUploads: today.c,
-    monthUploads: month.c,
-    dailyUploads: daily,
-    monthlyUploads: monthly,
-    byPlan,
-    perUser,
+    totalStorageBytes: files?.s ?? 0,
+    totalFiles: files?.c ?? 0,
+    totalImages: files?.imgs ?? 0,
+    totalVideos: files?.vids ?? 0,
+    totalFolders: folders?.c ?? 0,
+    totalUsers: users?.c ?? 0,
+    activeUsers: active?.c ?? 0,
+    suspendedUsers: suspended?.c ?? 0,
+    todayUploads: today?.c ?? 0,
+    monthUploads: month?.c ?? 0,
+    dailyUploads: daily ?? [],
+    monthlyUploads: monthly ?? [],
+    byPlan: byPlan ?? [],
+    perUser: perUser ?? [],
   };
 }

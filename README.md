@@ -1,70 +1,50 @@
-# Tellybase
+# Tellybase Auth
 
-A modern, affordable cloud storage platform for images and videos (Version 1),
-built to the Product Requirements Document in [`PRD.md`](PRD.md).
+A complete credentials sign-in experience for Next.js 16 with a private Telegram chat acting as the production account database.
 
-## What works
+## Features
 
-- **Authentication** via Clerk (sign up / sign in / sign out, sessions).
-- **Upload center** — drag-and-drop, multi-file image/video uploads with live
-  progress, stored through the Storage Manager.
-- **Gallery / Library** — grid view, search, sort, filter, inline image/video
-  preview.
-- **Folders** — create, nest, rename, move and delete folders.
-- **Recycle Bin** — restore or permanently delete files & folders, empty bin,
-  configurable retention.
-- **Storage usage** — per-user used / remaining / plan limit.
-- **Subscriptions** — Free / Starter / Pro plans with pricing, quotas, max
-  upload size; upgrade/downgrade from the UI.
-- **Activity history** — every action is logged and viewable.
-- **Admin dashboard** — analytics, user management (suspend/delete/change
-  plan), plan CRUD, announcements, maintenance mode, recycle retention.
-- **Storage Manager** — the only layer that talks to the storage backend.
-  Ships with a **Telegram** backend (PRD Appendix B) and a local-disk fallback.
+- Sign up, sign in, remember-me sessions, protected dashboard, and sign out
+- Passwords hashed with Node.js `scrypt` and unique salts (plaintext is never stored)
+- Signed, HTTP-only, SameSite session cookies
+- Versioned JSON account database uploaded to Telegram
+- Responsive dark UI with loading, validation, error, and connection states
+- Local JSON fallback during development so the flow can be tested immediately
 
-## Stack
-
-- Next.js 16 (App Router), React 19, Tailwind CSS 4
-- Clerk (auth)
-- Node `node:sqlite` for metadata (users, files, folders, plans, activity)
-- Abstracted Storage Manager (Telegram backend / local disk)
-
-## Getting started
+## Run locally
 
 ```bash
 npm install
-cp .env.example .env.local   # fill in the keys
 npm run dev
 ```
 
-Open http://localhost:3000.
+Open <http://localhost:3000>. Without Telegram variables, development uses `.data/auth.json` automatically.
 
-**Authentication and Telegram keys are required.** See
-[`SETUP.md`](SETUP.md) for step-by-step instructions on obtaining the Clerk
-keys and the Telegram bot token / chat id.
+## Connect Telegram for production
 
-## Architecture
+1. Create a bot with [@BotFather](https://t.me/BotFather) and copy its token.
+2. Create a **private channel or supergroup dedicated to Tellybase**.
+3. Add the bot as an administrator with permission to post messages and edit chat information.
+4. Obtain the numeric chat id (channel ids normally start with `-100`).
+5. In Vercel, add these as **Sensitive** variables for both Production and Preview, as shown in the reference:
 
-```
-UI (server components + client widgets)
-      │
-Business logic (lib/services) ──► SQLite metadata DB
-      │
-API routes (app/api) ───────────► Storage Manager (lib/storage)
-                                     ├── Telegram backend
-                                     └── Local disk backend (dev fallback)
+```env
+TELEGRAM_BOT_TOKEN=123456:your_bot_token
+TELEGRAM_CHAT_ID=-1001234567890
+SESSION_SECRET=optional_random_32_byte_secret
 ```
 
-- Business logic never talks to the storage backend directly — everything goes
-  through the Storage Manager, so the backend can be swapped without rewriting
-  the app (PRD §12, Appendix B).
-- No secrets (Clerk secret key, Telegram bot token) ever reach the browser.
-- Auth is always Clerk — the app never implements its own authentication.
+`SESSION_SECRET` is recommended; if absent, the server derives session signatures from the bot token. Never prefix either Telegram variable with `NEXT_PUBLIC_`.
 
-## Notes
+The app uploads `tellybase-auth-rN.json` to the private chat and saves the latest Telegram `file_id` in the chat description as `TBAUTH:<file_id>`. Use a dedicated chat because this description is managed by the app.
 
-- For local dev, `STORAGE_BACKEND=auto` uses Telegram when tokens are set and
-  local disk otherwise.
-- The local backend and SQLite metadata database use the server filesystem, so
-  for production on serverless hosts you should configure the Telegram backend
-  (or another persistent backend behind the Storage Manager).
+## Verify
+
+```bash
+npm run lint
+npm run build
+```
+
+## Security notes
+
+Telegram credentials stay in server-only modules. The stored database contains profile fields, timestamps, password salts, and scrypt hashes—never plaintext passwords. For a high-risk production system, add distributed rate limiting, email verification, password recovery, and MFA or use a dedicated authentication provider.

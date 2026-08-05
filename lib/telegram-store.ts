@@ -82,9 +82,18 @@ function parseDatabase(raw: string): AuthDatabase {
 }
 
 function telegramConfig() {
+  let token = process.env.TELEGRAM_BOT_TOKEN?.trim() ?? "";
+  if (token.startsWith("bot")) {
+    token = token.slice(3);
+  }
+  token = token.replace(/^["']|["']$/g, "").trim();
+
+  let chatId = process.env.TELEGRAM_CHAT_ID?.trim() ?? "";
+  chatId = chatId.replace(/^["']|["']$/g, "").trim();
+
   return {
-    token: process.env.TELEGRAM_BOT_TOKEN?.trim() ?? "",
-    chatId: process.env.TELEGRAM_CHAT_ID?.trim() ?? "",
+    token,
+    chatId,
     apiBase: (process.env.TELEGRAM_API_BASE ?? "https://api.telegram.org").replace(/\/$/, ""),
   };
 }
@@ -97,40 +106,82 @@ export function databaseMode(): "telegram" | "local" | "unconfigured" {
 
 async function telegramApi<T>(method: string, body: Record<string, unknown>): Promise<T> {
   const { token, apiBase } = telegramConfig();
-  const response = await fetch(`${apiBase}/bot${token}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
-  });
-  const payload = (await response.json()) as TelegramResponse<T>;
-  if (!response.ok || !payload.ok) {
-    const detail = payload.ok ? `HTTP ${response.status}` : payload.description;
-    throw new AccountStoreError(`Telegram ${method} failed${detail ? `: ${detail}` : ""}.`, true);
+  if (!token) {
+    throw new AccountStoreError("TELEGRAM_BOT_TOKEN is missing.", true);
   }
+
+  let response: Response;
+  try {
+    response = await fetch(`${apiBase}/bot${token}/${method}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "network error";
+    throw new AccountStoreError(`Could not connect to Telegram API (${msg}).`, true);
+  }
+
+  let payload: TelegramResponse<T>;
+  try {
+    payload = (await response.json()) as TelegramResponse<T>;
+  } catch {
+    throw new AccountStoreError(`Invalid JSON response from Telegram API for ${method} (HTTP ${response.status}).`, true);
+  }
+
+  if (!response.ok || !payload.ok) {
+    const detail = payload.ok ? `HTTP ${response.status}` : payload.description || `HTTP ${response.status}`;
+
+    // Harmless warning when chat description hasn't changed
+    if (method === "setChatDescription" && detail.toLowerCase().includes("not modified")) {
+      return {} as T;
+    }
+
+    throw new AccountStoreError(`Telegram ${method} failed: ${detail}`, true);
+  }
+
   return payload.result;
 }
 
 async function loadTelegram(): Promise<AuthDatabase> {
   const { token, chatId, apiBase } = telegramConfig();
+  if (!chatId) {
+    throw new AccountStoreError("TELEGRAM_CHAT_ID is missing.", true);
+  }
+
   const chat = await telegramApi<TelegramChat>("getChat", { chat_id: chatId });
   const fileId = chat.description?.match(POINTER)?.[1];
   if (!fileId) return emptyDatabase();
 
   const file = await telegramApi<TelegramFile>("getFile", { file_id: fileId });
-  if (!file.file_path) throw new AccountStoreError("Telegram did not return the database file.");
+  if (!file.file_path) throw new AccountStoreError("Telegram did not return the database file path.", true);
 
-  const response = await fetch(`${apiBase}/file/bot${token}/${file.file_path}`, {
-    cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!response.ok) throw new AccountStoreError("Could not download the Telegram account database.");
+  let response: Response;
+  try {
+    response = await fetch(`${apiBase}/file/bot${token}/${file.file_path}`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "network error";
+    throw new AccountStoreError(`Could not download database file from Telegram (${msg}).`, true);
+  }
+
+  if (!response.ok) {
+    throw new AccountStoreError(`Could not download database file from Telegram (HTTP ${response.status}).`, true);
+  }
+
   return parseDatabase(await response.text());
 }
 
 async function saveTelegram(database: AuthDatabase): Promise<void> {
   const { token, chatId, apiBase } = telegramConfig();
+  if (!token || !chatId) {
+    throw new AccountStoreError("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is missing.", true);
+  }
+
   const serialized = JSON.stringify(database, null, 2);
   const form = new FormData();
   form.append("chat_id", chatId);
@@ -141,19 +192,33 @@ async function saveTelegram(database: AuthDatabase): Promise<void> {
   );
   form.append("caption", `Tellybase auth database · revision ${database.revision}`);
 
-  const response = await fetch(`${apiBase}/bot${token}/sendDocument`, {
-    method: "POST",
-    body: form,
-    cache: "no-store",
-    signal: AbortSignal.timeout(20_000),
-  });
-  const payload = (await response.json()) as TelegramResponse<TelegramDocumentMessage>;
-  if (!response.ok || !payload.ok) {
-    const detail = payload.ok ? `HTTP ${response.status}` : payload.description;
-    throw new AccountStoreError(`Telegram upload failed${detail ? `: ${detail}` : ""}.`, true);
+  let response: Response;
+  try {
+    response = await fetch(`${apiBase}/bot${token}/sendDocument`, {
+      method: "POST",
+      body: form,
+      cache: "no-store",
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "network error";
+    throw new AccountStoreError(`Failed to upload database file to Telegram (${msg}).`, true);
   }
+
+  let payload: TelegramResponse<TelegramDocumentMessage>;
+  try {
+    payload = (await response.json()) as TelegramResponse<TelegramDocumentMessage>;
+  } catch {
+    throw new AccountStoreError(`Invalid response from Telegram when uploading database (HTTP ${response.status}).`, true);
+  }
+
+  if (!response.ok || !payload.ok) {
+    const detail = payload.ok ? `HTTP ${response.status}` : payload.description || `HTTP ${response.status}`;
+    throw new AccountStoreError(`Telegram sendDocument failed: ${detail}`, true);
+  }
+
   const fileId = payload.result.document?.file_id;
-  if (!fileId) throw new AccountStoreError("Telegram did not return a file id.");
+  if (!fileId) throw new AccountStoreError("Telegram did not return a file id for the uploaded database.", true);
 
   await telegramApi("setChatDescription", {
     chat_id: chatId,

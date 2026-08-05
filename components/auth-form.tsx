@@ -2,14 +2,13 @@
 
 import Link from "next/link";
 import { useActionState, useState } from "react";
-import { signIn, signUp, type AuthState } from "@/app/actions";
+import { signIn, signUp } from "@/app/actions";
 
 type Props = {
   mode: "signin" | "signup";
   database: "telegram" | "local" | "unconfigured";
+  initialError?: string;
 };
-
-const initialState: AuthState = {};
 
 function MailIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5h16v11H4z"/><path d="m4.5 7 7.5 6 7.5-6"/></svg>;
@@ -21,12 +20,12 @@ function UserIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4.5 20c.7-4 3.2-6 7.5-6s6.8 2 7.5 6"/></svg>;
 }
 function EyeIcon({ open }: { open: boolean }) {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/>{!open && <path d="m4 4 16 16"/>}</svg>;
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/>{!open && <path d="m4 4 16 16"/>}</svg>;
 }
 
-export function AuthForm({ mode, database }: Props) {
+export function AuthForm({ mode, database, initialError }: Props) {
   const action = mode === "signin" ? signIn : signUp;
-  const [state, formAction, pending] = useActionState(action, initialState);
+  const [state, formAction, pending] = useActionState(action, { error: initialError });
   const [showPassword, setShowPassword] = useState(false);
   const isSignIn = mode === "signin";
 

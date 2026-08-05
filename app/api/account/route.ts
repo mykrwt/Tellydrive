@@ -11,11 +11,15 @@ export async function GET() {
   const wp = getUserWithPlan(userId);
   if (!wp) return Response.json({ error: "Not found" }, { status: 404 });
   const activity = listActivity(userId, 10);
+  // Don't echo the user's stored Telegram credentials back to the client.
+  const safeUser = { ...wp.user } as Record<string, unknown>;
+  delete safeUser.tg_bot_token;
+  delete safeUser.tg_chat_id;
   return Response.json({
-    user: wp.user,
+    user: safeUser,
     plan: wp.plan,
     features: JSON.parse(wp.plan.features),
     recentActivity: activity,
-    backend: storageLabel(),
+    backend: storageLabel(wp.user),
   });
 }

@@ -1,5 +1,6 @@
 import { currentUserId } from "@/lib/auth";
 import { getOwnedFile } from "@/lib/services/files";
+import { getUser } from "@/lib/services/users";
 import { readFile } from "@/lib/storage";
 
 export const runtime = "nodejs";
@@ -24,10 +25,12 @@ export async function GET(
     return new Response("Not found", { status: 404 });
   }
 
+  const owner = getUser(userId);
   try {
     const { stream, contentType, length } = await readFile(
       file.storage_ref,
       file.mime ?? "application/octet-stream",
+      owner,
     );
     const headers = new Headers();
     headers.set("Content-Type", contentType);

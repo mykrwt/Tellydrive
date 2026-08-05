@@ -11,7 +11,6 @@ import type {
 // The app never touches Telegram directly — everything goes through the
 // Storage Manager.
 
-const API = "https://api.telegram.org";
 // Keep chunks comfortably under the Bot API's ~50 MB upload limit.
 const CHUNK_SIZE = 15 * 1024 * 1024;
 
@@ -21,31 +20,64 @@ interface TgResult {
   result?: any;
 }
 
+// Credentials for a Telegram storage backend instance. When omitted they fall
+// back to the platform defaults from env (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID).
+export interface TelegramCredentials {
+  botToken?: string;
+  chatId?: string;
+  apiBase?: string;
+}
+
 export class TelegramBackend implements StorageBackend {
   readonly kind = "telegram" as const;
-  readonly isConfigured = Boolean(
-    config.telegram.botToken && config.telegram.chatId,
-  );
   readonly label = "Telegram storage backend";
 
+  private readonly botToken: string;
+  private readonly chatIdValue: string;
+  private readonly apiBase: string;
+
+  constructor(creds: TelegramCredentials = {}) {
+    this.botToken = creds.botToken || config.telegram.botToken || "";
+    this.chatIdValue = creds.chatId || config.telegram.chatId || "";
+    this.apiBase = creds.apiBase || config.telegram.apiBase || "https://api.telegram.org";
+  }
+
+  get isConfigured(): boolean {
+    return Boolean(this.botToken && this.chatIdValue);
+  }
+
   private get chatId(): string {
-    if (!config.telegram.chatId) {
+    if (!this.chatIdValue) {
       throw new Error(
-        "TELEGRAM_CHAT_ID is not set. See SETUP.md to configure the storage chat.",
+        "Telegram storage chat is not set. Connect your own Telegram chat in Settings.",
       );
     }
-    return config.telegram.chatId;
+    return this.chatIdValue;
   }
 
   private token() {
-    if (!config.telegram.botToken) {
-      throw new Error("TELEGRAM_BOT_TOKEN is not set.");
+    if (!this.botToken) {
+      throw new Error("Telegram bot token is not set.");
     }
-    return config.telegram.botToken;
+    return this.botToken;
+  }
+
+  /** Verifies the bot token + chat id are usable (calls Telegram getChat). */
+  async testConnection(): Promise<{ ok: boolean; title?: string; error?: string }> {
+    if (!this.isConfigured) {
+      return { ok: false, error: "Both a bot token and a chat id are required." };
+    }
+    try {
+      const json = await this.call("getChat", { chat_id: this.chatIdValue });
+      const title = json.result?.title ?? json.result?.username ?? "Telegram chat";
+      return { ok: true, title };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : "Connection failed" };
+    }
   }
 
   private async call(method: string, params: Record<string, any>): Promise<TgResult> {
-    const res = await fetch(`${API}/bot${this.token()}/${method}`, {
+    const res = await fetch(`${this.apiBase}/bot${this.token()}/${method}`, {
       method: "POST",
       body: new URLSearchParams(
         Object.entries(params).map(([k, v]) => [k, String(v)]),
@@ -62,7 +94,7 @@ export class TelegramBackend implements StorageBackend {
     const form = new FormData();
     form.append("chat_id", this.chatId);
     form.append("document", new Blob([new Uint8Array(data)], { type: mime }), filename);
-    const res = await fetch(`${API}/bot${this.token()}/sendDocument`, {
+    const res = await fetch(`${this.apiBase}/bot${this.token()}/sendDocument`, {
       method: "POST",
       body: form,
     });
@@ -86,7 +118,7 @@ export class TelegramBackend implements StorageBackend {
 
   private async download(fileId: string): Promise<ReadableStream<Uint8Array>> {
     const filePath = await this.getFilePath(fileId);
-    const url = `${API}/file/bot${this.token()}/${filePath}`;
+    const url = `${this.apiBase}/file/bot${this.token()}/${filePath}`;
     const res = await fetch(url);
     if (!res.ok || !res.body) throw new Error("Telegram download failed");
     return res.body;

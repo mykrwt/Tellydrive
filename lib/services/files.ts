@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { logActivity } from "@/lib/services/activity";
 import { getOwnedFolder } from "@/lib/services/folders";
+import { getUser } from "@/lib/services/users";
 import { removeFile } from "@/lib/storage";
 
 export interface FileRow {
@@ -170,8 +171,9 @@ export function restoreFile(userId: string, fileId: number) {
 
 export async function permanentDeleteFile(userId: string, fileId: number) {
   const f = getOwnedFile(userId, fileId, true);
+  const owner = getUser(userId);
   try {
-    await removeFile(f.storage_ref);
+    await removeFile(f.storage_ref, owner);
   } catch {
     // Storage cleanup is best-effort; remove the metadata regardless.
   }
@@ -190,9 +192,10 @@ export function listTrashedFiles(userId: string): FileRow[] {
 
 export async function emptyTrash(userId: string) {
   const trashed = listTrashedFiles(userId);
+  const owner = getUser(userId);
   for (const f of trashed) {
     try {
-      await removeFile(f.storage_ref);
+      await removeFile(f.storage_ref, owner);
     } catch {
       /* best effort */
     }

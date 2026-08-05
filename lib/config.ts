@@ -11,6 +11,9 @@ export const config = {
     // Optional: a specific chat/channel id to store uploads in. If empty, the
     // bot's own chat is used (the bot must have been messaged first).
     chatId: process.env.TELEGRAM_CHAT_ID ?? "",
+    // Optional override for the Telegram Bot API base URL (defaults to the
+    // official API). Useful for self-hosted/MTProto proxies or testing.
+    apiBase: process.env.TELEGRAM_API_BASE ?? "https://api.telegram.org",
   },
   // Storage backend selection. "auto" prefers Telegram when a bot token is set,
   // otherwise falls back to local disk (useful for local dev / no tokens yet).

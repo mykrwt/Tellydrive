@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
 
     try {
       const buffer = Buffer.from(await file.arrayBuffer());
-      const stored = await storeFile(buffer, name, mime);
+      const stored = await storeFile(buffer, name, mime, wp.user);
       totalBytes += size;
       const record = createFile(userId, {
         name,

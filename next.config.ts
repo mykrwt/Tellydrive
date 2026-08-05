@@ -1,12 +1,22 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // The Telegram DB sync worker (lib/telegram-db-worker.mjs) is spawned at
-  // runtime via a child process, so it is never `import`ed by the app bundle.
-  // Make sure it's traced into the serverless function so it's present on the
-  // deployed server (otherwise cold-start restore/flush can't run).
-  outputFileTracingIncludes: {
-    "*": ["./lib/telegram-db-worker.mjs"],
+  poweredByHeader: false,
+  async headers() {
+    return [
+      {
+        source: "/(.*)",
+        headers: [
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "X-Frame-Options", value: "DENY" },
+          {
+            key: "Permissions-Policy",
+            value: "camera=(), microphone=(), geolocation=()",
+          },
+        ],
+      },
+    ];
   },
 };
 

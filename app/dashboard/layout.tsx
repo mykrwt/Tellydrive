@@ -32,8 +32,8 @@ export default async function DashboardLayout({
     // A Clerk session exists: try getting or creating the user directly
     try {
       user = getOrCreateUser(userId);
-    } catch {
-      // Failed to get or create user from DB
+    } catch (e) {
+      console.error("Dashboard: failed to get or create user", userId, e);
     }
   }
 

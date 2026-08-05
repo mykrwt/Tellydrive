@@ -77,6 +77,18 @@ export function planForUser(): PlanRow {
   return DEFAULT_FREE_PLAN;
 }
 
+// Throttle last_active_at updates so reading pages doesn't write to the DB
+// (and, in turn, trigger a Telegram DB flush) on every request.
+const LAST_ACTIVE_THROTTLE_MS = 5 * 60 * 1000; // 5 minutes
+
+function lastActiveAgeMs(ts: string | null): number | null {
+  if (!ts) return null;
+  // stored as UTC "YYYY-MM-DD HH:MM:SS" (sqlite datetime('now'))
+  const parsed = Date.parse(ts.replace(" ", "T") + "Z");
+  if (Number.isNaN(parsed)) return null;
+  return Date.now() - parsed;
+}
+
 export function getOrCreateUser(
   clerkId: string,
   profile?: { email?: string; name?: string; image_url?: string },
@@ -108,15 +120,27 @@ export function getOrCreateUser(
       /* ignore activity insert error */
     }
   } else {
-    d.prepare(
-      "UPDATE users SET last_active_at=datetime('now'), email=COALESCE(?, email), name=COALESCE(?, name), image_url=COALESCE(?, image_url) WHERE id=?",
-    ).run(
-      profile?.email ?? null,
-      profile?.name ?? null,
-      profile?.image_url ?? null,
-      clerkId,
-    );
-    user = d.prepare("SELECT * FROM users WHERE id=?").get(clerkId) as UserRow;
+    const activeAge = lastActiveAgeMs(user.last_active_at);
+    const needsActive =
+      activeAge === null || activeAge > LAST_ACTIVE_THROTTLE_MS;
+    const emailChanged = Boolean(profile?.email) && profile?.email !== user.email;
+    const nameChanged = Boolean(profile?.name) && profile?.name !== user.name;
+    const imageChanged = Boolean(profile?.image_url) && profile?.image_url !== user.image_url;
+
+    // Only write when something actually changed — this keeps the hot read path
+    // (which calls getOrCreateUser on every request) from writing to the DB and
+    // triggering a Telegram flush on every page load.
+    if (needsActive || emailChanged || nameChanged || imageChanged) {
+      d.prepare(
+        "UPDATE users SET last_active_at=datetime('now'), email=COALESCE(?, email), name=COALESCE(?, name), image_url=COALESCE(?, image_url) WHERE id=?",
+      ).run(
+        profile?.email ?? null,
+        profile?.name ?? null,
+        profile?.image_url ?? null,
+        clerkId,
+      );
+      user = d.prepare("SELECT * FROM users WHERE id=?").get(clerkId) as UserRow;
+    }
   }
   return user;
 }

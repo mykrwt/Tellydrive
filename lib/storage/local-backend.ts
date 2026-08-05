@@ -10,7 +10,7 @@ import {
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import path from "node:path";
-import { config } from "@/lib/config";
+import { writableDataDir } from "@/lib/data-dir";
 import type {
   StorageBackend,
   StoredObject,
@@ -28,7 +28,7 @@ export class LocalBackend implements StorageBackend {
 
   private resolve(ref: string): string {
     // Keep refs inside the storage root — never trust raw paths.
-    const root = path.join(config.dataDir, "storage");
+    const root = path.join(writableDataDir(), "storage");
     const full = path.resolve(root, ref);
     if (!full.startsWith(path.resolve(root))) {
       throw new Error("Invalid storage reference");
@@ -40,7 +40,7 @@ export class LocalBackend implements StorageBackend {
     const id = randomUUID();
     const safe = filename.replace(/[^\w.\- ]+/g, "_").slice(0, 120);
     const ref = `${id}/${safe}`;
-    const dir = path.join(config.dataDir, "storage", id);
+    const dir = path.join(writableDataDir(), "storage", id);
     mkdirSync(dir, { recursive: true });
     await pipeline(Readable.from([data]), createWriteStream(this.resolve(ref)));
     return { ref };

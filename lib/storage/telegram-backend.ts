@@ -11,7 +11,7 @@ import type {
 // The app never touches Telegram directly — everything goes through the
 // Storage Manager.
 
-const API = "https://api.telegram.org";
+const API = config.telegram.apiBase || "https://api.telegram.org";
 // Keep chunks comfortably under the Bot API's ~50 MB upload limit.
 const CHUNK_SIZE = 15 * 1024 * 1024;
 

@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { auth } from "@clerk/nextjs/server";
 import { currentUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +14,17 @@ export default async function DashboardLayout({
   children: React.ReactNode;
 }) {
   const user = await currentUser();
-  if (!user) redirect("/sign-in");
+  if (!user) {
+    const { userId } = await auth();
+    // Genuinely signed out — send them to Clerk's sign-in page.
+    if (!userId) redirect("/sign-in");
+    // A Clerk session exists but the app account couldn't be resolved.
+    // Bouncing through /sign-in here would make Clerk redirect the signed-in
+    // user back to the home page, producing the "dashboard → homepage" loop.
+    throw new Error(
+      "Unable to load your account. Please sign out and sign in again.",
+    );
+  }
 
   const plan = getPlan(user.plan_id);
   const overview = userOverview(user.id);

@@ -1,31 +1,126 @@
 import { DatabaseSync } from "node:sqlite";
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { config } from "@/lib/config";
+import { writableDataDir } from "@/lib/data-dir";
+import { restoreDbSync, flushDbSync } from "@/lib/telegram-db";
 
 // ---------------------------------------------------------------------------
 // SQLite metadata database. This stores the app's business data (users,
 // folders, files, plans, activity, settings). The Storage Manager is the only
 // place that talks to the storage backend (Telegram / disk) — the database
 // keeps references (telegram file ids / local paths) but never stores bytes.
+//
+// Durability: on serverless hosts the filesystem is ephemeral, so the sqlite
+// file is also mirrored to Telegram (lib/telegram-db). On cold start we restore
+// the latest copy; after every write we checkpoint and upload it back. When
+// Telegram isn't configured we simply use the local file (dev fallback).
 // ---------------------------------------------------------------------------
 
+let _raw: DatabaseSync | null = null;
 let _db: DatabaseSync | null = null;
 
 export type DB = DatabaseSync;
 
 export function db(): DatabaseSync {
   if (_db) return _db;
-  mkdirSync(config.dataDir, { recursive: true });
-  _db = new DatabaseSync(path.join(config.dataDir, "tellybase.db"));
-  _db.exec("PRAGMA journal_mode = WAL;");
-  _db.exec("PRAGMA foreign_keys = ON;");
-  migrate(_db);
-  seed(_db);
+  const dir = writableDataDir();
+  const dbPath = path.join(dir, "tellybase.db");
+
+  const status = restoreDbSync(dbPath);
+  _raw = new DatabaseSync(dbPath);
+  _raw.exec("PRAGMA journal_mode = WAL;");
+  _raw.exec("PRAGMA foreign_keys = ON;");
+  migrate(_raw);
+  seed(_raw);
+
+  if (status === "fresh") {
+    // A brand-new database was just created: upload it once so future cold
+    // starts have something to restore.
+    checkpoint();
+    flushDbSync(dbPath);
+  }
+
+  if (status === "restored" || status === "fresh") {
+    // Wrap the connection so every write is checkpointed and mirrored to
+    // Telegram. On "skipped" (no Telegram configured) we use the raw local DB.
+    _db = watchForWrites(_raw, () => {
+      checkpoint();
+      flushDbSync(dbPath);
+    });
+  } else {
+    _db = _raw;
+  }
   return _db;
 }
 
+function checkpoint(): void {
+  try {
+    _raw?.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
+  } catch (e) {
+    console.warn("[db] wal checkpoint failed:", e instanceof Error ? e.message : e);
+  }
+}
+
+/**
+ * Returns a Proxy over the raw DatabaseSync that mirrors every write to the
+ * Telegram-backed store. Writes are detected via total_changes() (which counts
+ * rows changed since the connection opened), covering both prepare().run() and
+ * exec() without needing to inspect every statement.
+ */
+function watchForWrites(db: DatabaseSync, onWrite: () => void): DatabaseSync {
+  const changes = () =>
+    (db.prepare("SELECT total_changes() AS c").get() as { c: number }).c;
+
+  const wrapStatement = (stmt: any): any =>
+    new Proxy(stmt, {
+      get(target, prop) {
+        if (prop === "run") {
+          return (...params: unknown[]) => {
+            const res = target.run(...params);
+            if (res && typeof res.changes === "number" && res.changes > 0) {
+              onWrite();
+            }
+            return res;
+          };
+        }
+        const value = (target as any)[prop];
+        if (typeof value === "function") return value.bind(target);
+        return value;
+      },
+    });
+
+  return new Proxy(db, {
+    get(target, prop) {
+      if (prop === "prepare") {
+        return (sql: string) => wrapStatement(target.prepare(sql));
+      }
+      if (prop === "exec") {
+        return (sql: string) => {
+          const before = changes();
+          const res = target.exec(sql);
+          if (changes() !== before) onWrite();
+          return res;
+        };
+      }
+      const value = (target as any)[prop];
+      if (typeof value === "function") return value.bind(target);
+      return value;
+    },
+  });
+}
+
 function migrate(d: DatabaseSync) {
+  // Per-user "bring your own Telegram" storage columns. SQLite can't add a
+  // column IF NOT EXISTS, so add them only when missing (safe for existing DBs).
+  const userCols = (d.prepare("PRAGMA table_info(users)").all() as { name: string }[]).map(
+    (c) => c.name,
+  );
+  if (!userCols.includes("tg_bot_token")) {
+    d.exec("ALTER TABLE users ADD COLUMN tg_bot_token TEXT");
+  }
+  if (!userCols.includes("tg_chat_id")) {
+    d.exec("ALTER TABLE users ADD COLUMN tg_chat_id TEXT");
+  }
   d.exec(`
   CREATE TABLE IF NOT EXISTS plans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

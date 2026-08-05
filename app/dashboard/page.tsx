@@ -1,36 +1,108 @@
-import { auth } from "@clerk/nextjs/server";
 import Link from "next/link";
-import { redirect } from "next/navigation";
-
-const recentFiles = [
-  ["Alpine retreat.jpg", "Photography", "2.4 MB", "lake"],
-  ["City after rain.mp4", "Video drafts", "128 MB", "night"],
-  ["Ceramics study.jpg", "Personal", "3.1 MB", "clay"],
-  ["Field notes.jpg", "Photography", "1.9 MB", "field"],
-];
+import { currentUser } from "@/lib/auth";
+import { userOverview } from "@/lib/services/stats";
+import { getPlan } from "@/lib/services/users";
+import { listFiles } from "@/lib/services/files";
+import { listActivity } from "@/lib/services/activity";
+import { formatBytes, formatDate } from "@/lib/config";
+import { fileIcon } from "@/lib/ui";
 
 export default async function DashboardPage() {
-  const { userId } = await auth();
+  const user = await currentUser();
+  if (!user) return null;
 
-  if (!userId) redirect("/");
+  const plan = getPlan(user.plan_id);
+  const overview = userOverview(user.id);
+  const recent = listFiles({ userId: user.id, sort: "newest" }).slice(0, 8);
+  const activity = listActivity(user.id, 6);
+  const percent = plan.storage_bytes
+    ? (overview.storageUsedBytes / plan.storage_bytes) * 100
+    : 0;
 
   return (
-    <main className="dashboard-shell">
-      <aside className="dashboard-side">
-        <p className="side-label">YOUR SPACE</p>
-        <Link href="/dashboard" className="side-current">▦ <span>Overview</span></Link>
-        <a href="#library">▱ <span>My library</span></a>
-        <a href="#folders">⌁ <span>Folders</span></a>
-        <a href="#activity">◷ <span>Activity</span></a>
-        <div className="side-bottom"><a href="#settings">⚙ <span>Settings</span></a><div className="side-storage"><span>Free plan</span><strong>1.8 GB <small>of 10 GB</small></strong><div><i /></div><button>Upgrade plan →</button></div></div>
-      </aside>
-      <section className="dashboard-content">
-        <div className="dash-top"><div><p className="eyebrow"><span /> YOUR STORAGE</p><h1>Good morning.</h1><p>Here&apos;s what&apos;s happening in your space.</p></div><button className="button button-primary">+ Upload files</button></div>
-        <div className="dash-stats"><article><span>STORAGE USED</span><strong>1.8 <small>GB</small></strong><div className="big-progress"><i /></div><p>8.2 GB remaining</p></article><article><span>TOTAL FILES</span><strong>32</strong><p>Across 4 folders</p></article><article><span>THIS MONTH</span><strong>14</strong><p>New uploads</p></article></div>
-        <div id="library" className="recent-head"><div><h2>Recent uploads</h2><p>Your latest files, all in one place.</p></div><a href="#all-files">View all files →</a></div>
-        <div className="recent-grid">{recentFiles.map(([name, folder, size, tone]) => <article key={name} className="file-card"><div className={`file-thumb ${tone}`}><span>{name.endsWith("mp4") ? "▶" : "✦"}</span></div><div><b>{name}</b><small>{folder} · {size}</small></div><button aria-label={`More actions for ${name}`}>•••</button></article>)}</div>
-        <section className="upload-cta"><div><span>↥</span><h2>Keep your work close.</h2><p>Drop images and videos here to add them to your library.</p></div><button className="button button-light">Choose files</button></section>
-      </section>
-    </main>
+    <>
+      <div className="dash-top">
+        <div>
+          <p className="eyebrow"><span /> YOUR STORAGE</p>
+          <h1>Good {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 18 ? "afternoon" : "evening"}.</h1>
+          <p>Here&apos;s what&apos;s happening in your space.</p>
+        </div>
+        <Link className="button button-primary" href="/dashboard/upload">+ Upload files</Link>
+      </div>
+
+      <div className="dash-stats">
+        <article>
+          <span>STORAGE USED</span>
+          <strong>{formatBytes(overview.storageUsedBytes)} <small>of {formatBytes(overview.storageLimitBytes)}</small></strong>
+          <div className="big-progress"><i style={{ width: `${Math.min(100, percent)}%` }} /></div>
+          <p>{formatBytes(Math.max(0, overview.storageLimitBytes - overview.storageUsedBytes))} remaining on {plan.name}</p>
+        </article>
+        <article>
+          <span>TOTAL FILES</span>
+          <strong>{overview.totalFiles}</strong>
+          <p>{overview.images} images · {overview.videos} videos</p>
+        </article>
+        <article>
+          <span>THIS MONTH</span>
+          <strong>{overview.thisMonthUploads}</strong>
+          <p>New uploads</p>
+        </article>
+      </div>
+
+      <div className="recent-head">
+        <div>
+          <h2>Recent uploads</h2>
+          <p>Your latest files, all in one place.</p>
+        </div>
+        <Link href="/dashboard/gallery">View all files →</Link>
+      </div>
+
+      {recent.length === 0 ? (
+        <div className="empty-state">
+          <span className="empty-icon">↥</span>
+          <h3>Nothing here yet</h3>
+          <p>Upload your first images or videos to see them here.</p>
+          <Link className="button button-primary" href="/dashboard/upload">Upload files</Link>
+        </div>
+      ) : (
+        <div className="recent-grid">
+          {recent.map((f) => (
+            <article key={f.id} className="file-card">
+              <div className={`file-thumb ${f.is_image ? "is-image" : "is-video"}`}>
+                {f.is_image ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={`/api/files/${f.id}/content`} alt={f.name} loading="lazy" />
+                ) : (
+                  <span>▶</span>
+                )}
+              </div>
+              <div>
+                <b>{f.name}</b>
+                <small>{formatBytes(f.size_bytes)} · {formatDate(f.created_at)}</small>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+
+      <div className="recent-head activity-head">
+        <div>
+          <h2>Recent activity</h2>
+          <p>Latest actions in your account.</p>
+        </div>
+        <Link href="/dashboard/activity">View all →</Link>
+      </div>
+      <div className="activity-list">
+        {activity.map((a) => (
+          <div key={a.id} className="activity-row">
+            <span className="activity-icon">{fileIcon(a.type)}</span>
+            <div>
+              <b>{a.detail ?? a.type}</b>
+              <small>{a.type.replace(".", " · ")} — {formatDate(a.created_at)}</small>
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }

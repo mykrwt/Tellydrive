@@ -1,36 +1,70 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Tellybase
 
-## Getting Started
+A modern, affordable cloud storage platform for images and videos (Version 1),
+built to the Product Requirements Document in [`PRD.md`](PRD.md).
 
-First, run the development server:
+## What works
+
+- **Authentication** via Clerk (sign up / sign in / sign out, sessions).
+- **Upload center** — drag-and-drop, multi-file image/video uploads with live
+  progress, stored through the Storage Manager.
+- **Gallery / Library** — grid view, search, sort, filter, inline image/video
+  preview.
+- **Folders** — create, nest, rename, move and delete folders.
+- **Recycle Bin** — restore or permanently delete files & folders, empty bin,
+  configurable retention.
+- **Storage usage** — per-user used / remaining / plan limit.
+- **Subscriptions** — Free / Starter / Pro plans with pricing, quotas, max
+  upload size; upgrade/downgrade from the UI.
+- **Activity history** — every action is logged and viewable.
+- **Admin dashboard** — analytics, user management (suspend/delete/change
+  plan), plan CRUD, announcements, maintenance mode, recycle retention.
+- **Storage Manager** — the only layer that talks to the storage backend.
+  Ships with a **Telegram** backend (PRD Appendix B) and a local-disk fallback.
+
+## Stack
+
+- Next.js 16 (App Router), React 19, Tailwind CSS 4
+- Clerk (auth)
+- Node `node:sqlite` for metadata (users, files, folders, plans, activity)
+- Abstracted Storage Manager (Telegram backend / local disk)
+
+## Getting started
 
 ```bash
+npm install
+cp .env.example .env.local   # fill in the keys
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+**Authentication and Telegram keys are required.** See
+[`SETUP.md`](SETUP.md) for step-by-step instructions on obtaining the Clerk
+keys and the Telegram bot token / chat id.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Architecture
 
-## Learn More
+```
+UI (server components + client widgets)
+      │
+Business logic (lib/services) ──► SQLite metadata DB
+      │
+API routes (app/api) ───────────► Storage Manager (lib/storage)
+                                     ├── Telegram backend
+                                     └── Local disk backend (dev fallback)
+```
 
-To learn more about Next.js, take a look at the following resources:
+- Business logic never talks to the storage backend directly — everything goes
+  through the Storage Manager, so the backend can be swapped without rewriting
+  the app (PRD §12, Appendix B).
+- No secrets (Clerk secret key, Telegram bot token) ever reach the browser.
+- Auth is always Clerk — the app never implements its own authentication.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Notes
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- For local dev, `STORAGE_BACKEND=auto` uses Telegram when tokens are set and
+  local disk otherwise.
+- The local backend and SQLite metadata database use the server filesystem, so
+  for production on serverless hosts you should configure the Telegram backend
+  (or another persistent backend behind the Storage Manager).

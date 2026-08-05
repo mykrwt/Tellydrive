@@ -23,10 +23,12 @@ Open <http://localhost:3000>. Without Telegram variables, development uses `.dat
 ## Connect Telegram for production
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) and copy its token.
-2. Create a **private channel or supergroup dedicated to Tellybase**.
-3. Add the bot as an administrator with permission to post messages and edit chat information.
-4. Obtain the numeric chat id (channel ids normally start with `-100`).
-5. In Vercel, add these as **Sensitive** variables for both Production and Preview, as shown in the reference:
+2. Create a **private channel or supergroup dedicated to Tellybase** (basic groups are not supported).
+3. Add the bot as an administrator with permission to:
+   - **Post Messages** (to upload database revisions)
+   - **Edit Chat Info** ("Change Channel Info" / "Change Group Info", so the bot can update the `TBAUTH:<file_id>` pointer in the description)
+4. Obtain the numeric chat id (channel and supergroup ids start with `-100`, e.g., `-1001234567890`).
+5. In Vercel or your `.env` file, add:
 
 ```env
 TELEGRAM_BOT_TOKEN=123456:your_bot_token
@@ -34,9 +36,16 @@ TELEGRAM_CHAT_ID=-1001234567890
 SESSION_SECRET=optional_random_32_byte_secret
 ```
 
-`SESSION_SECRET` is recommended; if absent, the server derives session signatures from the bot token. Never prefix either Telegram variable with `NEXT_PUBLIC_`.
+`SESSION_SECRET` is recommended; if absent, the server derives session signatures from the bot token. Never prefix Telegram variables with `NEXT_PUBLIC_`. Do not wrap values in quotes or include a `bot` prefix in `TELEGRAM_BOT_TOKEN`.
 
-The app uploads `tellybase-auth-rN.json` to the private chat and saves the latest Telegram `file_id` in the chat description as `TBAUTH:<file_id>`. Use a dedicated chat because this description is managed by the app.
+The app uploads `tellybase-auth-rN.json` to the private chat and saves the latest Telegram `file_id` in the chat description as `TBAUTH:<file_id>`.
+
+## Troubleshooting Telegram setup
+
+- **Bad Request: chat not found**: Ensure `TELEGRAM_CHAT_ID` includes the `-100` prefix for supergroups/channels, and verify the bot was added to the chat.
+- **Bad Request: not enough rights to change chat info**: Edit the bot's admin permissions in Telegram and enable "Change Channel Info" or "Change Group Info".
+- **Unauthorized**: Re-check `TELEGRAM_BOT_TOKEN`.
+- **Method is available only for supergroups and channels**: Convert your group into a supergroup or create a private channel.
 
 ## Verify
 

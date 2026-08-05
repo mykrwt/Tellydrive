@@ -4,7 +4,15 @@ import type { databaseMode } from "@/lib/telegram-store";
 
 type DatabaseMode = ReturnType<typeof databaseMode>;
 
-export function AuthPage({ mode, database }: { mode: "signin" | "signup"; database: DatabaseMode }) {
+export function AuthPage({
+  mode,
+  database,
+  initialError,
+}: {
+  mode: "signin" | "signup";
+  database: DatabaseMode;
+  initialError?: string;
+}) {
   return (
     <main className="auth-page">
       <section className="story-panel">
@@ -25,7 +33,7 @@ export function AuthPage({ mode, database }: { mode: "signin" | "signup"; databa
       </section>
       <section className="form-panel">
         <div className="mobile-brand"><Logo /></div>
-        <AuthForm mode={mode} database={database} />
+        <AuthForm mode={mode} database={database} initialError={initialError} />
       </section>
     </main>
   );

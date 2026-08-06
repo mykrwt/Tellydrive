@@ -90,7 +90,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         });
         const headers = new Headers();
         headers.set("Content-Type", file.mimeType || "application/octet-stream");
-        headers.set("Content-Disposition", `attachment; filename="${encodeURIComponent(file.name)}"`);
+        const inline = searchParams.get("inline") === "1";
+        headers.set("Content-Disposition", `${inline ? "inline" : "attachment"}; filename="${encodeURIComponent(file.name)}"`);
         headers.set("Content-Length", String(file.size));
         headers.set("Accept-Ranges", "none");
         return new NextResponse(stream, { headers });
@@ -139,7 +140,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         if (!upstream.ok) return NextResponse.json({ error: "Upstream failed" }, { status: 502 });
         const headers = new Headers();
         headers.set("Content-Type", file.mimeType || "application/octet-stream");
-        headers.set("Content-Disposition", `attachment; filename="${encodeURIComponent(file.name)}"`);
+        const inline2 = searchParams.get("inline") === "1";
+        headers.set("Content-Disposition", `${inline2 ? "inline" : "attachment"}; filename="${encodeURIComponent(file.name)}"`);
         if (upstream.headers.get("content-length")) headers.set("Content-Length", upstream.headers.get("content-length")!);
         return new NextResponse(upstream.body, { headers });
       }

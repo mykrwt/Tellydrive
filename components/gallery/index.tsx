@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { GalleryToolbar } from "./toolbar";
 import { GalleryGrid } from "./gallery-grid";
 import { GalleryList } from "./gallery-list";
+import { GalleryViewer } from "./viewer";
 import { UploadQueue, type QueueItem } from "./upload-queue";
 import { Breadcrumbs } from "./breadcrumbs";
 import { DragDropOverlay } from "./drag-drop-overlay";
@@ -46,6 +47,7 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
   const [context, setContext] = useState<{ x: number; y: number; file: ClientFile } | null>(null);
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(false);
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropRef = useRef<HTMLDivElement>(null);
 
@@ -116,6 +118,13 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
   const clearSelection = () => setSelected(new Set());
 
   const selectedFiles = useMemo(() => visible.filter((f) => selected.has(f.id)), [visible, selected]);
+
+  const viewerFiles = useMemo(() => visible.filter((f) => f.mimeType.startsWith("image/") || f.mimeType.startsWith("video/")), [visible]);
+  const openViewer = useCallback((file: ClientFile) => {
+    const idx = viewerFiles.findIndex((f) => f.id === file.id);
+    if (idx !== -1) setViewerIndex(idx);
+  }, [viewerFiles]);
+  const closeViewer = useCallback(() => setViewerIndex(null), []);
 
   // Large-file path: split into ≤ 4 MiB parts so each request fits Vercel's
   // 4.5 MB body limit. Each part is forwarded to Telegram and returns a signed
@@ -406,6 +415,7 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
             }}
             onDownload={handleDownload}
             onDelete={(f) => handleDelete([f.id])}
+            onOpen={openViewer}
           />
         ) : (
           <GalleryList
@@ -418,6 +428,7 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
             }}
             onDownload={handleDownload}
             onDelete={(f) => handleDelete([f.id])}
+            onOpen={openViewer}
           />
         )}
         <div ref={sentinelRef} style={{ height: 1 }} />
@@ -465,6 +476,18 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
           }}
         />
       )}
+
+      <AnimatePresence>
+        {viewerIndex !== null && viewerFiles[viewerIndex] && (
+          <GalleryViewer
+            files={viewerFiles}
+            index={viewerIndex}
+            onClose={closeViewer}
+            onChange={setViewerIndex}
+            onDownload={handleDownload}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

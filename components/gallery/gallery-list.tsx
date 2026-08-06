@@ -16,6 +16,7 @@ export function GalleryList({
   onContext,
   onDownload,
   onDelete,
+  onOpen,
 }: {
   files: ClientFile[];
   selected: Set<string>;
@@ -23,6 +24,7 @@ export function GalleryList({
   onContext: (e: React.MouseEvent, f: ClientFile) => void;
   onDownload: (f: ClientFile) => void;
   onDelete: (f: ClientFile) => void;
+  onOpen?: (f: ClientFile) => void;
 }) {
   return (
     <div className="list-wrap" role="table" aria-label="Files">
@@ -36,17 +38,22 @@ export function GalleryList({
       </div>
       {files.map((file) => {
         const isSel = selected.has(file.id);
+        const canPreview = file.mimeType.startsWith("image/") || file.mimeType.startsWith("video/");
         return (
           <div
             key={file.id}
             role="row"
-            className={`list-row ${isSel ? "selected" : ""}`}
+            className={`list-row ${isSel ? "selected" : ""} ${canPreview ? "previewable" : ""}`}
             onClick={(e) => {
               if (e.metaKey || e.ctrlKey || e.shiftKey) onSelect(file.id, true);
+              else if (canPreview && onOpen) onOpen(file);
               else onSelect(file.id);
             }}
             onContextMenu={(e) => onContext(e, file)}
-            onDoubleClick={() => onDownload(file)}
+            onDoubleClick={() => {
+              if (canPreview && onOpen) onOpen(file);
+              else onDownload(file);
+            }}
           >
             <span role="cell">
               <button

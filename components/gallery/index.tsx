@@ -11,6 +11,7 @@ import { DragDropOverlay } from "./drag-drop-overlay";
 import { SelectionBar } from "./selection-bar";
 import { ContextMenu } from "./context-menu";
 import { EmptyState } from "./empty-state";
+import { PART_UPLOAD_SIZE } from "@/lib/upload-config";
 export type ClientFile = {
   id: string;
   name: string;
@@ -116,6 +117,52 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
 
   const selectedFiles = useMemo(() => visible.filter((f) => selected.has(f.id)), [visible, selected]);
 
+  // Large-file path: split into ≤ 4 MiB parts so each request fits Vercel's
+  // 4.5 MB body limit. Each part is forwarded to Telegram and returns a signed
+  // token; /api/files/finalize stitches the tokens into one file record.
+  const uploadInParts = useCallback(async (item: QueueItem) => {
+    const file = item.file;
+    const count = Math.ceil(file.size / PART_UPLOAD_SIZE);
+    const uploadId = `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+    const tokens: string[] = [];
+
+    for (let i = 0; i < count; i++) {
+      const start = i * PART_UPLOAD_SIZE;
+      const part = file.slice(start, Math.min(start + PART_UPLOAD_SIZE, file.size));
+      const fd = new FormData();
+      fd.append("file", part, `${file.name}.part${String(i + 1).padStart(3, "0")}`);
+      fd.append("name", file.name);
+      fd.append("index", String(i));
+      fd.append("count", String(count));
+      fd.append("size", String(file.size));
+      fd.append("mimeType", file.type || "application/octet-stream");
+      fd.append("uploadId", uploadId);
+
+      const res = await fetch("/api/files/upload-part", { method: "POST", body: fd });
+      const data = (await res.json().catch(() => ({}))) as { token?: string; error?: string };
+      if (!res.ok || !data.token) {
+        throw new Error(data.error || `Upload failed (part ${i + 1} of ${count})`);
+      }
+      tokens.push(data.token);
+      const pct = Math.round(((i + 1) / count) * 95); // last 5% = finalize
+      setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, progress: pct } : x)));
+    }
+
+    const fin = await fetch("/api/files/finalize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: file.name,
+        size: file.size,
+        mimeType: file.type || "application/octet-stream",
+        uploadId,
+        parts: tokens,
+      }),
+    });
+    const finData = (await fin.json().catch(() => ({}))) as { id?: string; error?: string };
+    if (!fin.ok || !finData.id) throw new Error(finData.error || "Upload failed");
+  }, []);
+
   // Upload handling
   const uploadFiles = useCallback(async (list: FileList | File[]) => {
     const arr = Array.from(list);
@@ -134,19 +181,26 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
 
     // Sequential upload to avoid flooding Telegram (per spec).
     // Append the File exactly as selected/pasted/dropped — no canvas resizing,
-    // re-encoding, or quality reduction — and send it as a document so Telegram stores the original bytes.
+    // re-encoding, or quality reduction — and send it as a document so Telegram
+    // stores the original bytes.
+    //
+    // Vercel caps request bodies at 4.5 MB, so files larger than one part are
+    // split in the browser and sent as sequential small parts, then finalized.
     for (const item of items) {
       setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, status: "uploading" as const } : x)));
       try {
-        const fd = new FormData();
-        fd.append("file", item.file, item.file.name);
-        // API route uses sendDocument; image/video bytes are preserved at original quality.
-        const res = await fetch("/api/files", { method: "POST", body: fd });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok && !data.results) throw new Error(data.error || "Upload failed");
-        // Even 207 may have partial success
-        const result = data.results?.[0];
-        if (result && !result.ok) throw new Error(result.error || "Upload failed");
+        if (item.file.size > PART_UPLOAD_SIZE) {
+          await uploadInParts(item);
+        } else {
+          const fd = new FormData();
+          fd.append("file", item.file, item.file.name);
+          const res = await fetch("/api/files", { method: "POST", body: fd });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok && !data.results) throw new Error(data.error || "Upload failed");
+          // Even 207 may have partial success
+          const result = data.results?.[0];
+          if (result && !result.ok) throw new Error(result.error || "Upload failed");
+        }
 
         setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, progress: 100, status: "done" as const } : x)));
         // Refresh list incrementally without full scan
@@ -161,7 +215,7 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
     setTimeout(() => {
       setQueue((q) => q.filter((x) => x.status === "uploading" || x.status === "queued"));
     }, 3000);
-  }, [fetchFiles]);
+  }, [fetchFiles, uploadInParts]);
 
   // Drag & drop
   useEffect(() => {

@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getFilesPaginated, addFile, type StoredFile } from "@/lib/telegram-store";
-import { uploadToStorage } from "@/lib/telegram-storage";
+import { uploadToStorage, friendlyStorageError } from "@/lib/telegram-storage";
 import { sanitizeFileName, sanitizeSearchQuery } from "@/lib/validation";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { randomUUID } from "node:crypto";
+
+// Vercel: allow long-running uploads/streaming responses.
+export const maxDuration = 60;
 
 // GET /api/files?limit=24&offset=0&search=&mime=image&sortBy=date&sortOrder=desc&view=gallery
 export async function GET(req: NextRequest) {
@@ -123,8 +126,8 @@ export async function POST(req: NextRequest) {
     } catch (err: unknown) {
       console.error("POST /api/files upload error:", err);
       const msg = err instanceof Error ? err.message : "Upload failed";
-      // Generic error to client, detailed logs server-side
-      const userMsg = msg.includes("Telegram") || msg.includes("Storage") ? "Something went wrong. Please try again." : msg;
+      // Generic errors to client, detailed logs server-side
+      const userMsg = msg.includes("Telegram") || msg.includes("Storage") ? friendlyStorageError(msg) : msg;
       results.push({ name: file.name || "file", ok: false, error: userMsg });
     }
   }

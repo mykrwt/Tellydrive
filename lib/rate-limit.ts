@@ -36,6 +36,9 @@ export function rateLimit(key: string, limit: number, windowMs: number): { ok: b
 // Presets
 export const limits = {
   upload: { limit: 30, windowMs: 60_000 }, // 30 uploads/min
+  // Large files arrive as many small parts (Vercel body-limit workaround);
+  // a 2 GB file is ~512 parts, so this budget must be generous.
+  uploadPart: { limit: 2000, windowMs: 60_000 },
   list: { limit: 120, windowMs: 60_000 }, // 120 list/min
   download: { limit: 120, windowMs: 60_000 },
   delete: { limit: 60, windowMs: 60_000 },

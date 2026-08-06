@@ -1,7 +1,7 @@
 import "server-only";
 
 // Simple in-memory rate limiter. For production, replace with Redis/Upstash.
-// Keyed by userId + endpoint, sliding window.
+// Keyed by userId + endpoint or IP + endpoint, sliding window.
 
 type Entry = { count: number; resetAt: number };
 const store = new Map<string, Entry>();
@@ -42,15 +42,34 @@ export const limits = {
   list: { limit: 120, windowMs: 60_000 }, // 120 list/min
   download: { limit: 120, windowMs: 60_000 },
   delete: { limit: 60, windowMs: 60_000 },
+  auth: { limit: 10, windowMs: 10 * 60_000 }, // 10 auth attempts / 10 min per IP
+  authStrict: { limit: 5, windowMs: 15 * 60_000 }, // 5 per 15 min per IP+email
 };
 
 export function checkRateLimit(userId: string, endpoint: keyof typeof limits) {
   const cfg = limits[endpoint];
   const result = rateLimit(`${userId}:${endpoint}`, cfg.limit, cfg.windowMs);
   if (!result.ok) {
-    const err = new Error(`Too many requests. Try again soon.`) as Error & { status?: number };
+    const err = new Error(`Too many requests. Try again soon.`) as Error & { status?: number; resetAt?: number };
     err.status = 429;
+    (err as unknown as { resetAt: number }).resetAt = result.resetAt;
     throw err;
   }
   return result;
+}
+
+export function checkIpRateLimit(ip: string, endpoint: keyof typeof limits) {
+  const cfg = limits[endpoint];
+  const result = rateLimit(`ip:${ip}:${endpoint}`, cfg.limit, cfg.windowMs);
+  if (!result.ok) {
+    const err = new Error(`Too many requests. Try again soon.`) as Error & { status?: number; resetAt?: number };
+    err.status = 429;
+    (err as unknown as { resetAt: number }).resetAt = result.resetAt;
+    throw err;
+  }
+  return result;
+}
+
+export function getRetryAfterSec(resetAt: number): number {
+  return Math.max(1, Math.ceil((resetAt - Date.now()) / 1000));
 }

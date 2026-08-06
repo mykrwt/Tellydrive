@@ -8,7 +8,7 @@ import {
   updateFile,
   type StoredFile,
 } from "@/lib/telegram-store";
-import { uploadToStorage, getStorageFileUrl } from "@/lib/telegram-storage";
+import { uploadToStorage, getStorageFileUrl, friendlyStorageError } from "@/lib/telegram-storage";
 import { sanitizeFileName } from "@/lib/validation";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { randomUUID } from "node:crypto";
@@ -60,7 +60,8 @@ export async function uploadFileAction(formData: FormData) {
     // Map internal errors to generic user-facing messages, log details server-side
     console.error("uploadToStorage failed:", err);
     const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(msg && !msg.includes("Telegram") ? msg : genericError());
+    if (msg.includes("Telegram") || msg.includes("Storage")) throw new Error(friendlyStorageError(msg));
+    throw new Error(msg || genericError());
   }
 
   // Build StoredFile index entry

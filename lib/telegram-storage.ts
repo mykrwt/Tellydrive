@@ -1,6 +1,6 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { AccountStoreError } from "./telegram-store";
@@ -54,7 +54,11 @@ export function isTelegramEnabled(): boolean {
 }
 
 // ── Constants for chunking & optimization ──
-export const CHUNK_SIZE = 20 * 1024 * 1024; // 20 MB
+// Telegram Bot API limits: uploads ≤ 50 MB (sendDocument), downloads via
+// getFile ≤ 20 MB. Chunks must stay comfortably UNDER the 20 MB download
+// limit or reassembly/downloads fail with FILE_DOWNLOAD_LIMIT_EXCEEDED, so
+// we use 19 MB parts (also safely below the 50 MB upload limit).
+export const CHUNK_SIZE = 19 * 1024 * 1024; // 19 MB
 export const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2 GB
 export const MAX_RETRIES = 5;
 export const INITIAL_BACKOFF_MS = 1000;
@@ -341,4 +345,126 @@ export async function getChunkUrls(chunks: ChunkMeta[], tokenOverride?: string):
  */
 export function canAccessFile(ownerId: string, requesterId: string): boolean {
   return ownerId === requesterId;
+}
+
+/**
+ * Send one already-sized part (< 5 MB) to storage as a Telegram document.
+ * Used by the part-based upload flow so each browser request stays under
+ * Vercel's 4.5 MB body limit. Returns the storage ids for that part.
+ */
+export async function sendPartToStorage(
+  partName: string,
+  blob: Blob,
+  caption?: string
+): Promise<{ fileId: string; messageId: number }> {
+  const name = sanitizeFileName(partName);
+  const globalStorage = storageConfig();
+  const token = globalStorage.token;
+  const chatId = globalStorage.chatId;
+  const apiBase = globalStorage.apiBase;
+
+  // Local fallback (dev without Telegram)
+  if (!token || !chatId) {
+    if (databaseMode() === "local") {
+      const local = await saveLocalBlob(blob);
+      return { fileId: local.fileId, messageId: local.messageId };
+    }
+    throw new AccountStoreError("Storage is not configured. Contact support.");
+  }
+
+  return queued(async () => {
+    const { fileId, messageId } = await telegramSendDocument(token, chatId, apiBase, blob, name, caption);
+    return { fileId, messageId };
+  });
+}
+
+// ── Signed part tokens ──
+// The browser uploads parts individually and gets back an opaque signed token
+// per part; finalize only accepts tokens this server issued. This prevents
+// referencing arbitrary Telegram file_ids the user does not own.
+
+export type PartTokenPayload = {
+  sub: string; // user id the part was uploaded by
+  uploadId: string; // groups the parts of one file
+  fileId: string;
+  messageId: number;
+  size: number;
+  order: number;
+  exp: number; // epoch seconds
+};
+
+function partTokenSecret(): string {
+  return (
+    process.env.SESSION_SECRET ||
+    process.env.TELEGRAM_BOT_TOKEN ||
+    (process.env.NODE_ENV !== "production" ? "tellybase-local-development-session-key" : "")
+  );
+}
+
+export function signPartToken(payload: PartTokenPayload): string {
+  const secret = partTokenSecret();
+  if (!secret) throw new AccountStoreError("SESSION_SECRET is not configured.");
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const sig = createHmac("sha256", secret).update(encoded).digest("base64url");
+  return `${encoded}.${sig}`;
+}
+
+export function verifyPartToken(token: unknown): PartTokenPayload | null {
+  if (typeof token !== "string" || !token) return null;
+  const secret = partTokenSecret();
+  if (!secret) return null;
+  try {
+    const [encoded, signature, extra] = token.split(".");
+    if (!encoded || !signature || extra) return null;
+    const actual = Buffer.from(signature, "base64url");
+    const expected = Buffer.from(createHmac("sha256", secret).update(encoded).digest("base64url"), "base64url");
+    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
+    const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as PartTokenPayload;
+    if (
+      typeof payload.sub !== "string" ||
+      typeof payload.uploadId !== "string" ||
+      typeof payload.fileId !== "string" ||
+      typeof payload.messageId !== "number" ||
+      typeof payload.size !== "number" ||
+      typeof payload.order !== "number" ||
+      typeof payload.exp !== "number"
+    ) {
+      return null;
+    }
+    if (payload.exp <= Math.floor(Date.now() / 1000)) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Map internal Telegram/storage failures to short, actionable messages that
+ * are safe to show in the UI (no tokens, chat ids, or raw API details).
+ */
+export function friendlyStorageError(msg: string): string {
+  const lower = msg.toLowerCase();
+  if (lower.includes("chat not found")) {
+    return "Storage channel not found. Check the channel ID and make sure the bot was added to the channel.";
+  }
+  if (
+    lower.includes("not enough rights") ||
+    lower.includes("forbidden") ||
+    lower.includes("bot is not a member") ||
+    lower.includes("no rights")
+  ) {
+    return "The bot can't post in the storage channel. Make it an admin with “Post Messages” permission.";
+  }
+  if (
+    lower.includes("too big") ||
+    lower.includes("entity too large") ||
+    lower.includes("request entity") ||
+    lower.includes("file is too big")
+  ) {
+    return "This file is larger than Telegram accepts. Try a smaller file.";
+  }
+  if (lower.includes("timeout") || lower.includes("network") || lower.includes("econn")) {
+    return "Could not reach Telegram storage right now. Check your connection and try again.";
+  }
+  return "Something went wrong. Please try again.";
 }

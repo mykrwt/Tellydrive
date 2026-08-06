@@ -4,6 +4,9 @@ import { getFilesForUser, removeFile } from "@/lib/telegram-store";
 import { getStorageFileUrl, getChunkUrls } from "@/lib/telegram-storage";
 import { checkRateLimit } from "@/lib/rate-limit";
 
+// Vercel: reassembled (chunked) downloads stream through this function.
+export const maxDuration = 60;
+
 // GET /api/files/[id] — returns file metadata + download URLs (verified owner)
 // Or streams file if ?download=1
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -48,10 +51,52 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (file.chunked && file.chunks?.length) {
     try {
       const urls = await getChunkUrls(file.chunks);
+      if (download && searchParams.get("proxy") === "1") {
+        // Stream all chunks back-to-back as a single body so the client
+        // receives the complete original file (videos, large files) instead
+        // of a JSON manifest. Chunks are fetched sequentially in order.
+        // Same-origin chunk URLs (local dev storage) still require the session
+        // cookie, so forward it for relative URLs. Resolve them to absolute now —
+        // inside the stream callback the request context is gone.
+        const origin = new URL(req.url).origin;
+        const cookie = req.headers.get("cookie") ?? "";
+        const targets = urls.map((u) => {
+          const sameOrigin = u.startsWith("/");
+          return { url: sameOrigin ? `${origin}${u}` : u, sameOrigin };
+        });
+        const stream = new ReadableStream<Uint8Array>({
+          async start(controller) {
+            try {
+              for (const { url, sameOrigin } of targets) {
+                const upstream = await fetch(url, {
+                  cache: "no-store",
+                  headers: sameOrigin && cookie ? { cookie } : undefined,
+                });
+                if (!upstream.ok || !upstream.body) {
+                  throw new Error(`Upstream chunk failed (HTTP ${upstream.status})`);
+                }
+                const reader = upstream.body.getReader();
+                for (;;) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  controller.enqueue(value);
+                }
+              }
+              controller.close();
+            } catch (err) {
+              controller.error(err);
+            }
+          },
+        });
+        const headers = new Headers();
+        headers.set("Content-Type", file.mimeType || "application/octet-stream");
+        headers.set("Content-Disposition", `attachment; filename="${encodeURIComponent(file.name)}"`);
+        headers.set("Content-Length", String(file.size));
+        headers.set("Accept-Ranges", "none");
+        return new NextResponse(stream, { headers });
+      }
       if (download) {
-        // For chunked, we can't directly redirect to single URL.
-        // Return JSON with chunk URLs so client can reassemble.
-        // Also support proxy streaming via /api/files/[id]/stream (future)
+        // Without proxy, return JSON with chunk URLs so client can reassemble.
         return NextResponse.json({
           file: {
             id: file.id,
@@ -83,8 +128,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (download) {
       // If ?download=1&proxy=1, we could proxy; for now redirect
       if (searchParams.get("proxy") === "1") {
-        // Proxy streaming to hide token and enforce owner check
-        const upstream = await fetch(url, { cache: "no-store" });
+        // Proxy streaming to hide token and enforce owner check.
+        // Same-origin URLs (local dev storage) need the session cookie forwarded.
+        const sameOrigin = url.startsWith("/");
+        const cookie = req.headers.get("cookie") ?? "";
+        const upstream = await fetch(url, {
+          cache: "no-store",
+          headers: sameOrigin && cookie ? { cookie } : undefined,
+        });
         if (!upstream.ok) return NextResponse.json({ error: "Upstream failed" }, { status: 502 });
         const headers = new Headers();
         headers.set("Content-Type", file.mimeType || "application/octet-stream");

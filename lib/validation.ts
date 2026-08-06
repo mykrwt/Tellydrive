@@ -48,18 +48,23 @@ export function validateFileType(mime: string, name: string): { ok: boolean; kin
   const lowerMime = mime.toLowerCase();
   const lowerName = name.toLowerCase();
 
-  const imageMimes = ["image/jpeg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif", "image/avif"];
-  const videoMimes = ["video/mp4", "video/webm", "video/quicktime", "video/x-matroska", "video/x-msvideo", "video/avi", "video/mov"];
+  const imageExts = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".heif", ".avif", ".bmp", ".tiff", ".jfif"];
+  const videoExts = [
+    ".mp4", ".webm", ".mov", ".mkv", ".avi", ".m4v", ".3gp", ".3g2",
+    ".mpg", ".mpeg", ".wmv", ".flv", ".ts", ".m2ts", ".ogv", ".vob", ".f4v", ".mts",
+  ];
 
-  const imageExts = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".heif", ".avif"];
-  const videoExts = [".mp4", ".webm", ".mov", ".mkv", ".avi", ".m4v", ".3gp"];
+  // Accept any real image/video MIME type — browsers report many container
+  // variants (video/3gpp, video/x-matroska, video/mp2t, …) and the bytes are
+  // stored as-is, so there is no reason to hard-block uncommon ones.
+  if (lowerMime.startsWith("image/")) return { ok: true, kind: "image" };
+  if (lowerMime.startsWith("video/")) return { ok: true, kind: "video" };
 
-  if (imageMimes.includes(lowerMime) || imageExts.some((e) => lowerName.endsWith(e))) {
-    return { ok: true, kind: "image" };
-  }
-  if (videoMimes.includes(lowerMime) || videoExts.some((e) => lowerName.endsWith(e))) {
-    return { ok: true, kind: "video" };
-  }
+  // Fallback: missing/generic MIME — decide by extension (phones and desktop
+  // drag & drop often omit the MIME type).
+  if (imageExts.some((e) => lowerName.endsWith(e))) return { ok: true, kind: "image" };
+  if (videoExts.some((e) => lowerName.endsWith(e))) return { ok: true, kind: "video" };
+
   // For now only images/videos are allowed
   return { ok: false, kind: "other" };
 }

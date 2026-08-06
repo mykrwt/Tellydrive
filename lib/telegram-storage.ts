@@ -311,6 +311,55 @@ export async function uploadToStorage(
   });
 }
 
+// ── Resolved file URL cache ──
+// Every getFile call is a Telegram API round-trip with up to 15s worst-case
+// latency, and before this cache every single thumbnail/preview/render paid
+// it. Resolved download URLs stay valid for at least an hour, so cache them
+// (with single-flight coalescing + LRU cap) and thumbnails become instant
+// after the first view. Keys include the token so a token rotation can never
+// hand out URLs signed with the old one.
+const FILE_URL_TTL_MS = 50 * 60 * 1000; // 50 min (Telegram guarantees ≥ 1 h)
+const FILE_URL_CACHE_MAX = 2000;
+const fileUrlCache = new Map<string, { url: string; expiresAt: number }>();
+const fileUrlPending = new Map<string, Promise<string>>();
+
+function getCachedUrl(key: string): string | null {
+  const hit = fileUrlCache.get(key);
+  if (!hit) return null;
+  if (hit.expiresAt <= Date.now()) {
+    fileUrlCache.delete(key);
+    return null;
+  }
+  // Refresh LRU position
+  fileUrlCache.delete(key);
+  fileUrlCache.set(key, hit);
+  return hit.url;
+}
+
+function rememberUrl(key: string, url: string) {
+  fileUrlCache.delete(key);
+  fileUrlCache.set(key, { url, expiresAt: Date.now() + FILE_URL_TTL_MS });
+  while (fileUrlCache.size > FILE_URL_CACHE_MAX) {
+    const oldest = fileUrlCache.keys().next().value;
+    if (oldest === undefined) break;
+    fileUrlCache.delete(oldest);
+  }
+}
+
+/** Run `fn` over `items` with a small worker pool (order preserved). */
+async function mapWithConcurrency<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  async function worker() {
+    while (cursor < items.length) {
+      const i = cursor++;
+      results[i] = await fn(items[i]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, items.length)) }, () => worker()));
+  return results;
+}
+
 /**
  * Get a direct Telegram file URL (or local URL) for a file.
  * Handles chunked files by returning URL for a specific chunk or manifest.
@@ -330,19 +379,34 @@ export async function getStorageFileUrl(
   const apiBase = globalStorage.apiBase;
   if (!token) throw new AccountStoreError("Storage token missing.");
 
-  const filePath = await telegramGetFilePath(token, apiBase, fileId);
-  return `${apiBase}/file/bot${token}/${filePath}`;
+  const cacheKey = `${token}:${fileId}`;
+  const cached = getCachedUrl(cacheKey);
+  if (cached) return cached;
+
+  const inFlight = fileUrlPending.get(cacheKey);
+  if (inFlight) return inFlight;
+
+  const pending = telegramGetFilePath(token, apiBase, fileId)
+    .then((filePath) => {
+      const url = `${apiBase}/file/bot${token}/${filePath}`;
+      rememberUrl(cacheKey, url);
+      return url;
+    })
+    .finally(() => {
+      fileUrlPending.delete(cacheKey);
+    });
+  fileUrlPending.set(cacheKey, pending);
+  return pending;
 }
 
 /**
- * Get URLs for all chunks of a chunked file (for reassembly/streaming)
+ * Get URLs for all chunks of a chunked file (for reassembly/streaming).
+ * Resolved in parallel with a small pool — a 2 GB file is ~108 chunk URLs,
+ * which used to take 108 sequential Telegram round-trips.
  */
 export async function getChunkUrls(chunks: ChunkMeta[], tokenOverride?: string): Promise<string[]> {
-  const urls: string[] = [];
-  for (const c of chunks.sort((a, b) => a.order - b.order)) {
-    urls.push(await getStorageFileUrl(c.fileId, tokenOverride));
-  }
-  return urls;
+  const ordered = chunks.slice().sort((a, b) => a.order - b.order);
+  return mapWithConcurrency(ordered, 6, (c) => getStorageFileUrl(c.fileId, tokenOverride));
 }
 
 /**

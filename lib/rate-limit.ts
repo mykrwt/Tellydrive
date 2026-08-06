@@ -87,6 +87,9 @@ export const limits = {
   // Download/stream: 90/min per user, 60/min per IP fallback
   download: { limit: 90, windowMs: 60_000 },
   downloadIp: { limit: 60, windowMs: 60_000 },
+  // Metadata, thumbnail and preview reads: generous so media grids/tiles
+  // render without tripping the download fuse (they stream no bytes here)
+  preview: { limit: 300, windowMs: 60_000 },
   // Single-shot upload (≤4 MB): 20/min per user
   upload: { limit: 20, windowMs: 60_000 },
   // Chunk parts: 800/min per user (~3 GB/min), burst-tolerant

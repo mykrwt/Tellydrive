@@ -335,15 +335,51 @@ async function saveLocal(database: AuthDatabase): Promise<void> {
   await writeFile(temporary, JSON.stringify(database, null, 2), { mode: 0o600 });
   await rename(temporary, destination);
 }
-async function load(): Promise<AuthDatabase> {
+// ── In-process database read cache ──
+// A telegram-mode load() costs three round-trips (getChat → getFile →
+// download JSON) and EVERY request needs the database (session lookup, file
+// listing, each thumbnail…). Without a cache, a single page view triggers
+// dozens of blocking downloads, all serialized behind one global queue.
+// A short TTL + single-flight coalescing turns almost all reads into
+// in-memory lookups. Writes go straight through and refresh the cache
+// (write-through), so this process always sees its own changes instantly;
+// other serverless instances may serve data up to DB_CACHE_TTL_MS stale —
+// the same trade-off lib/api-cache already makes for query results.
+const DB_CACHE_TTL_MS = 8_000;
+let dbCache: { db: AuthDatabase; expiresAt: number } | null = null;
+let dbLoadPromise: Promise<AuthDatabase> | null = null;
+
+function loadUncached(): Promise<AuthDatabase> {
   const mode = databaseMode();
   if (mode === "telegram") return loadTelegram();
   if (mode === "local") return loadLocal();
   throw new AccountStoreError("Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to enable sign in.", true);
 }
+
+async function load(): Promise<AuthDatabase> {
+  if (dbCache && dbCache.expiresAt > Date.now()) return dbCache.db;
+  if (dbLoadPromise) return dbLoadPromise;
+  dbLoadPromise = loadUncached()
+    .then((db) => {
+      dbCache = { db, expiresAt: Date.now() + DB_CACHE_TTL_MS };
+      return db;
+    })
+    .finally(() => {
+      dbLoadPromise = null;
+    });
+  return dbLoadPromise;
+}
 async function save(database: AuthDatabase): Promise<void> {
-  if (databaseMode() === "telegram") return saveTelegram(database);
-  return saveLocal(database);
+  try {
+    if (databaseMode() === "telegram") await saveTelegram(database);
+    else await saveLocal(database);
+    // Write-through: keep the cached copy identical to what we persisted.
+    dbCache = { db: database, expiresAt: Date.now() + DB_CACHE_TTL_MS };
+  } catch (err) {
+    // Never keep serving an in-memory version we failed to persist.
+    dbCache = null;
+    throw err;
+  }
 }
 function serialized<T>(operation: () => Promise<T>): Promise<T> {
   const result = queue.then(operation, operation);
@@ -475,6 +511,16 @@ export async function getFilesPaginated(
     const total = filtered.length;
     const slice = filtered.slice(query.offset, query.offset + query.limit);
     return { files: slice, total };
+  });
+}
+
+export async function getFileById(userId: string, fileId: string, opts: { includeTrashed?: boolean } = {}): Promise<StoredFile | null> {
+  return serialized(async () => {
+    const database = await load();
+    const file = database.files.find((f) => f.id === fileId && f.userId === userId) ?? null;
+    if (!file) return null;
+    if (file.trashed && !opts.includeTrashed) return null;
+    return file;
   });
 }
 

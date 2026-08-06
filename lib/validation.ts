@@ -6,7 +6,16 @@ import path from "node:path";
 const ID_RE = /^[a-zA-Z0-9_-]{6,64}$/;
 
 // Windows reserved characters and control chars that break Telegram/form-data filenames
-const ILLEGAL_FILE_NAME_CHARS = /[<>:"|?*\x00-\x1F]/g;
+const ILLEGAL_FILE_NAME_CHARS = /[<>:\"|?*\x00-\x1F]/g;
+
+// Dangerous double extensions (executables hidden as media)
+const BLOCKED_EXTENSIONS = new Set([
+  ".exe", ".dll", ".bat", ".cmd", ".com", ".msi", ".scr", ".pif",
+  ".js", ".jse", ".vbs", ".vbe", ".ws", ".wsf", ".wsh",
+  ".ps1", ".psm1", ".sh", ".bash", ".csh",
+  ".app", ".deb", ".rpm", ".dmg", ".pkg",
+  ".jar", ".war",
+]);
 
 // Prevent path traversal, null bytes, control chars. Instead of throwing on
 // disallowed characters, we replace them so uploads from phones/cameras with
@@ -25,28 +34,49 @@ export function sanitizeFileName(name: string): string {
   // Replace illegal characters with an underscore instead of rejecting the upload
   cleaned = cleaned.replace(ILLEGAL_FILE_NAME_CHARS, "_");
 
+  // Block dangerous extensions even when disguised as double ext (e.g., photo.jpg.exe)
+  const lower = cleaned.toLowerCase();
+  const ext = path.extname(lower);
+  if (BLOCKED_EXTENSIONS.has(ext)) throw new Error("File type not allowed.");
+
+  // Also check if any segment contains blocked ext (photo.exe.jpg -> still block .exe segment)
+  const parts = lower.split(".");
+  for (const p of parts.slice(1)) {
+    if (BLOCKED_EXTENSIONS.has(`.${p}`)) throw new Error("File type not allowed.");
+  }
+
   // Trim trailing dots/spaces that are illegal on Windows and can break downloads
-  cleaned = cleaned.replace(/[.\s]+$/g, "").trim();
+  cleaned = cleaned.replace(/[.\\s]+$/g, "").trim();
 
   // Collapse multiple consecutive underscores left over from replacement
   cleaned = cleaned.replace(/_{2,}/g, "_");
+
+  // Prevent hidden files
+  if (cleaned.startsWith(".")) cleaned = "_" + cleaned.slice(1);
 
   if (!cleaned || cleaned === "." || cleaned === "..") throw new Error("Invalid file name");
 
   // Keep length within 255 chars while preserving the file extension
   if (cleaned.length > 255) {
-    const ext = path.extname(cleaned);
-    const stem = path.basename(cleaned, ext);
-    const maxStem = Math.max(1, 255 - ext.length);
-    cleaned = (stem.slice(0, maxStem) + ext).slice(0, 255);
+    const ext2 = path.extname(cleaned);
+    const stem = path.basename(cleaned, ext2);
+    const maxStem = Math.max(1, 255 - ext2.length);
+    cleaned = (stem.slice(0, maxStem) + ext2).slice(0, 255);
   }
+
+  // Final XSS check: no < > even after sanitization
+  if (/[<>]/.test(cleaned)) throw new Error("Invalid file name");
 
   return cleaned;
 }
 
 export function validateFileType(mime: string, name: string): { ok: boolean; kind: "image" | "video" | "other" } {
-  const lowerMime = mime.toLowerCase();
+  const lowerMime = mime.toLowerCase().trim();
   const lowerName = name.toLowerCase();
+
+  // Strict allow-list for mime prefixes; block executable mimes explicitly
+  const blockedMimes = ["application/x-msdownload", "application/x-sh", "text/javascript", "application/javascript"];
+  if (blockedMimes.includes(lowerMime)) return { ok: false, kind: "other" };
 
   const imageExts = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".heif", ".avif", ".bmp", ".tiff", ".jfif"];
   const videoExts = [
@@ -57,7 +87,16 @@ export function validateFileType(mime: string, name: string): { ok: boolean; kin
   // Accept any real image/video MIME type — browsers report many container
   // variants (video/3gpp, video/x-matroska, video/mp2t, …) and the bytes are
   // stored as-is, so there is no reason to hard-block uncommon ones.
-  if (lowerMime.startsWith("image/")) return { ok: true, kind: "image" };
+  if (lowerMime.startsWith("image/")) {
+    // Validate that extension matches if present
+    const ext = path.extname(lowerName);
+    if (ext && !imageExts.includes(ext) && !videoExts.includes(ext)) {
+      // Allow image mime with unknown ext? Block non-media ext
+      // If it's clearly not image/video ext, reject
+      if (BLOCKED_EXTENSIONS.has(ext)) return { ok: false, kind: "other" };
+    }
+    return { ok: true, kind: "image" };
+  }
   if (lowerMime.startsWith("video/")) return { ok: true, kind: "video" };
 
   // Fallback: missing/generic MIME — decide by extension (phones and desktop
@@ -78,9 +117,11 @@ export function validateFileSize(size: number): string | null {
 
 export function sanitizeSearchQuery(q: unknown): string {
   if (typeof q !== "string") return "";
-  // Strip control chars, trim, limit length
-  const clean = q.replace(/[\\x00-\\x1F\\x7F]/g, "").trim().slice(0, 100);
-  // Escape regex special chars for safe use
+  // Strip control chars, trim, limit length, prevent ReDoS by simple length cap
+  const clean = q.replace(/[\x00-\x1F\x7F]/g, "").trim().slice(0, 100);
+  // Remove potential XSS / injection chars but keep useful search chars
+  // Allow letters, numbers, spaces, - _ . @
+  // We keep clean as-is after stripping controls; server uses includes() not regex, so safe.
   return clean;
 }
 

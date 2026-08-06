@@ -2,49 +2,70 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getFilesForUser, removeFile } from "@/lib/telegram-store";
 import { getStorageFileUrl, getChunkUrls } from "@/lib/telegram-storage";
-import { checkRateLimit } from "@/lib/rate-limit";
+import { checkRateLimit, checkRateLimitWithIp, getRetryAfterSec, rateLimitHeaders } from "@/lib/rate-limit";
+import { invalidatePrefix } from "@/lib/api-cache";
 
-// Vercel: reassembled (chunked) downloads stream through this function.
 export const maxDuration = 60;
+
+function noStore(res: NextResponse): NextResponse {
+  res.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+  res.headers.set("Pragma", "no-cache");
+  return res;
+}
 
 // GET /api/files/[id] — returns file metadata + download URLs (verified owner)
 // Or streams file if ?download=1
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!user) return noStore(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
+  // 90/min per user + 60/min per IP burst fuse
+  const dlIp = req.headers.get("cf-connecting-ip") || req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  let dlRl: ReturnType<typeof checkRateLimit> | null = null;
   try {
-    checkRateLimit(user.id, "download");
+    dlRl = checkRateLimitWithIp(user.id, dlIp, "download");
   } catch (e: unknown) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : "Too many requests" }, { status: 429 });
+    const r = (e as unknown as { result?: ReturnType<typeof checkRateLimit> }).result;
+    const h = r ? rateLimitHeaders(r) : {};
+    const resetAt = (e as unknown as { resetAt: number }).resetAt ?? Date.now() + 60000;
+    return noStore(
+      NextResponse.json({ error: e instanceof Error ? e.message : "Too many requests" }, {
+        status: 429,
+        headers: { ...h, "Retry-After": String(getRetryAfterSec(resetAt)) },
+      })
+    );
   }
 
   const { id } = await params;
-  if (!id || typeof id !== "string") return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+  if (!id || typeof id !== "string" || !/^[a-zA-Z0-9_-]{6,64}$/.test(id)) {
+    return noStore(NextResponse.json({ error: "Invalid id" }, { status: 400 }));
+  }
 
   const files = await getFilesForUser(user.id);
   const file = files.find((f) => f.id === id);
-  if (!file) return NextResponse.json({ error: "File not found" }, { status: 404 });
+  if (!file) return noStore(NextResponse.json({ error: "File not found" }, { status: 404 }));
 
   const { searchParams } = new URL(req.url);
   const download = searchParams.get("download") === "1";
   const thumbnail = searchParams.get("thumbnail") === "1";
+
+  // Validate query params strictly
+  const allowedParams = new Set(["download", "proxy", "thumbnail", "redirect", "inline"]);
+  for (const k of searchParams.keys()) {
+    if (!allowedParams.has(k)) return noStore(NextResponse.json({ error: "Invalid query param" }, { status: 400 }));
+  }
 
   // Thumbnail request: return thumbnail URL if exists, else primary
   if (thumbnail) {
     const thumbId = file.thumbnailFileId || file.telegramFileId;
     try {
       const url = await getStorageFileUrl(thumbId);
-      // Redirect to Telegram CDN via server proxy to avoid exposing token?
-      // For now we redirect; client will fetch via proxied URL.
-      // To avoid exposing token in URL, we could proxy streaming. But for simplicity return URL.
-      // Security: URL contains token, but it's scoped to this file and user owns it.
-      // Alternative: proxy.
       if (searchParams.get("redirect") === "0") {
-        return NextResponse.json({ url });
+        return noStore(NextResponse.json({ url }, { headers: { "Cache-Control": "private, max-age=3600" } }));
       }
-      return NextResponse.redirect(url);
+      // Redirects to Telegram CDN — cache privately for 1h (still requires Telegram token)
+      return NextResponse.redirect(url, { headers: { "Cache-Control": "private, max-age=3600" } } as unknown as ResponseInit);
     } catch {
-      return NextResponse.json({ error: "Could not get thumbnail" }, { status: 500 });
+      return noStore(NextResponse.json({ error: "Could not get thumbnail" }, { status: 500 }));
     }
   }
 
@@ -52,12 +73,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     try {
       const urls = await getChunkUrls(file.chunks);
       if (download && searchParams.get("proxy") === "1") {
-        // Stream all chunks back-to-back as a single body so the client
-        // receives the complete original file (videos, large files) instead
-        // of a JSON manifest. Chunks are fetched sequentially in order.
-        // Same-origin chunk URLs (local dev storage) still require the session
-        // cookie, so forward it for relative URLs. Resolve them to absolute now —
-        // inside the stream callback the request context is gone.
         const origin = new URL(req.url).origin;
         const cookie = req.headers.get("cookie") ?? "";
         const targets = urls.map((u) => {
@@ -90,89 +105,123 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         });
         const headers = new Headers();
         headers.set("Content-Type", file.mimeType || "application/octet-stream");
-        headers.set("Content-Disposition", `attachment; filename="${encodeURIComponent(file.name)}"`);
+        const inline = searchParams.get("inline") === "1";
+        // Use inline for viewer playback, attachment for downloads — prevent XSS via mime sniffing
+        headers.set("Content-Disposition", `${inline ? "inline" : "attachment"}; filename="${encodeURIComponent(file.name)}"`);
         headers.set("Content-Length", String(file.size));
         headers.set("Accept-Ranges", "none");
+        headers.set("Cache-Control", "no-store");
+        headers.set("X-Content-Type-Options", "nosniff");
         return new NextResponse(stream, { headers });
       }
       if (download) {
-        // Without proxy, return JSON with chunk URLs so client can reassemble.
-        return NextResponse.json({
-          file: {
-            id: file.id,
-            name: file.name,
-            size: file.size,
-            mimeType: file.mimeType,
-            chunked: true,
-            chunkCount: file.chunks.length,
-          },
-          urls,
-        });
+        return noStore(
+          NextResponse.json({
+            file: {
+              id: file.id,
+              name: file.name,
+              size: file.size,
+              mimeType: file.mimeType,
+              chunked: true,
+              chunkCount: file.chunks.length,
+            },
+            urls,
+          })
+        );
       }
-      return NextResponse.json({
-        id: file.id,
-        name: file.name,
-        size: file.size,
-        mimeType: file.mimeType,
-        createdAt: file.createdAt,
-        chunked: true,
-        urls,
-      });
+      return noStore(
+        NextResponse.json({
+          id: file.id,
+          name: file.name,
+          size: file.size,
+          mimeType: file.mimeType,
+          createdAt: file.createdAt,
+          chunked: true,
+          urls,
+        })
+      );
     } catch {
-      return NextResponse.json({ error: "Could not get file URLs" }, { status: 500 });
+      return noStore(NextResponse.json({ error: "Could not get file URLs" }, { status: 500 }));
     }
   }
 
   try {
     const url = await getStorageFileUrl(file.telegramFileId);
     if (download) {
-      // If ?download=1&proxy=1, we could proxy; for now redirect
       if (searchParams.get("proxy") === "1") {
-        // Proxy streaming to hide token and enforce owner check.
-        // Same-origin URLs (local dev storage) need the session cookie forwarded.
         const sameOrigin = url.startsWith("/");
         const cookie = req.headers.get("cookie") ?? "";
         const upstream = await fetch(url, {
           cache: "no-store",
           headers: sameOrigin && cookie ? { cookie } : undefined,
         });
-        if (!upstream.ok) return NextResponse.json({ error: "Upstream failed" }, { status: 502 });
+        if (!upstream.ok) return noStore(NextResponse.json({ error: "Upstream failed" }, { status: 502 }));
         const headers = new Headers();
         headers.set("Content-Type", file.mimeType || "application/octet-stream");
-        headers.set("Content-Disposition", `attachment; filename="${encodeURIComponent(file.name)}"`);
+        const inline2 = searchParams.get("inline") === "1";
+        headers.set("Content-Disposition", `${inline2 ? "inline" : "attachment"}; filename="${encodeURIComponent(file.name)}"`);
+        headers.set("X-Content-Type-Options", "nosniff");
+        headers.set("Cache-Control", "no-store");
         if (upstream.headers.get("content-length")) headers.set("Content-Length", upstream.headers.get("content-length")!);
         return new NextResponse(upstream.body, { headers });
       }
-      return NextResponse.redirect(url);
+      // Redirect to Telegram CDN
+      return NextResponse.redirect(url, { headers: { "Cache-Control": "private, max-age=3600" } } as unknown as ResponseInit);
     }
-    return NextResponse.json({
-      id: file.id,
-      name: file.name,
-      size: file.size,
-      mimeType: file.mimeType,
-      createdAt: file.createdAt,
-      url,
-    });
+    return noStore(
+      NextResponse.json({
+        id: file.id,
+        name: file.name,
+        size: file.size,
+        mimeType: file.mimeType,
+        createdAt: file.createdAt,
+        url,
+      })
+    );
   } catch {
-    return NextResponse.json({ error: "Could not get file" }, { status: 500 });
+    return noStore(NextResponse.json({ error: "Could not get file" }, { status: 500 }));
   }
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!user) return noStore(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
+  const delIp = req.headers.get("cf-connecting-ip") || req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
   try {
-    checkRateLimit(user.id, "delete");
+    checkRateLimitWithIp(user.id, delIp, "delete");
   } catch (e: unknown) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : "Too many requests" }, { status: 429 });
+    const r = (e as unknown as { result?: ReturnType<typeof checkRateLimit> }).result;
+    const h = r ? rateLimitHeaders(r) : {};
+    const resetAt = (e as unknown as { resetAt: number }).resetAt ?? Date.now() + 60000;
+    return noStore(
+      NextResponse.json({ error: e instanceof Error ? e.message : "Too many requests" }, {
+        status: 429,
+        headers: { ...h, "Retry-After": String(getRetryAfterSec(resetAt)) },
+      })
+    );
   }
+  // CSRF: require same-origin for DELETE
+  const origin = req.headers.get("origin");
+  const host = req.headers.get("host");
+  if (origin) {
+    try {
+      const o = new URL(origin);
+      if (o.host !== host && o.host !== req.headers.get("x-forwarded-host")) {
+        return noStore(NextResponse.json({ error: "Forbidden" }, { status: 403 }));
+      }
+    } catch {
+      return noStore(NextResponse.json({ error: "Invalid origin" }, { status: 400 }));
+    }
+  }
+
   const { id } = await params;
-  if (!id) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+  if (!id || !/^[a-zA-Z0-9_-]{6,64}$/.test(id)) return noStore(NextResponse.json({ error: "Invalid id" }, { status: 400 }));
 
   const files = await getFilesForUser(user.id);
   const file = files.find((f) => f.id === id);
-  if (!file) return NextResponse.json({ error: "File not found" }, { status: 404 });
+  if (!file) return noStore(NextResponse.json({ error: "File not found" }, { status: 404 }));
 
   await removeFile(id, user.id);
-  return NextResponse.json({ ok: true });
+  invalidatePrefix(`files:${user.id}:`);
+  return noStore(NextResponse.json({ ok: true }));
 }

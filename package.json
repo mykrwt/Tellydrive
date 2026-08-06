@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
     "lint": "eslint .",
-    "check": "npm run lint && npm run build"
+    "check": "npm run lint && npm run build",
+    "make-admin": "node scripts/set-admin.mjs"
   },
   "dependencies": {
     "@react-three/fiber": "^9.7.0",

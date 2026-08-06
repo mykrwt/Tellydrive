@@ -99,10 +99,14 @@ export function FileManager({
     const reqId = ++reqIdRef.current;
     setLoading(true);
     try {
-      const scope = folderId ? `folderId=${encodeURIComponent(folderId)}` : "root=1";
+      // NB: /api/folders understands parentId|root|all (NOT folderId) while
+      // /api/files understands folderId|root — build the scopes separately or
+      // opening a folder silently re-lists the root folders.
+      const folderScope = folderId ? `parentId=${encodeURIComponent(folderId)}` : "root=1";
+      const fileScope = folderId ? `folderId=${encodeURIComponent(folderId)}` : "root=1";
       const [folderRes, fileRes, pathRes] = await Promise.all([
-        api(`/api/folders?${scope}`),
-        api(`/api/files?${scope}&limit=500&sortBy=name&sortOrder=asc`),
+        api(`/api/folders?${folderScope}`),
+        api(`/api/files?${fileScope}&limit=500&sortBy=name&sortOrder=asc`),
         folderId ? api(`/api/folders/${encodeURIComponent(folderId)}`) : Promise.resolve(null),
       ]);
       if (reqId !== reqIdRef.current) return;
@@ -767,10 +771,11 @@ function FolderCard({ folder, selected, onOpen, onSelect, onContext }: {
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       className={`fm-folder-card ${selected ? "selected" : ""}`}
+      // Single click opens the folder (Finder/Explorer behaviour);
+      // Ctrl/Cmd/Shift+click toggles selection instead.
       onClick={(e) => {
         if (e.metaKey || e.ctrlKey || e.shiftKey) onSelect(true);
-        else if (selected) onOpen();
-        else onSelect(false);
+        else onOpen();
       }}
       onDoubleClick={onOpen}
       onContextMenu={onContext}
@@ -931,10 +936,10 @@ function FileList({ folders, files, selectedFolders, selectedFiles, onOpenFolder
             key={folder.id}
             role="row"
             className={`list-row ${isSel ? "selected" : ""}`}
+            // Single click opens the folder; Ctrl/Cmd/Shift+click selects.
             onClick={(e) => {
               if (e.metaKey || e.ctrlKey || e.shiftKey) onToggleFolder(folder.id, true);
-              else if (isSel) onOpenFolder(folder);
-              else onToggleFolder(folder.id, false);
+              else onOpenFolder(folder);
             }}
             onDoubleClick={() => onOpenFolder(folder)}
             onContextMenu={(e) => onContext(e, { type: "folder", id: folder.id, name: folder.name })}

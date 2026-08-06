@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { getFilesForUser, getFolderById, removeFile, updateFile } from "@/lib/telegram-store";
+import { getFileById, getFolderById, removeFile, updateFile } from "@/lib/telegram-store";
 import { getStorageFileUrl, getChunkUrls } from "@/lib/telegram-storage";
 import { checkRateLimit, checkRateLimitWithIp, getRetryAfterSec, rateLimitHeaders } from "@/lib/rate-limit";
 import { sanitizeFileName } from "@/lib/validation";
@@ -14,16 +14,40 @@ function noStore(res: NextResponse): NextResponse {
   return res;
 }
 
+// Absolute origin the BROWSER can reach. req.url may carry the internal bind
+// address (e.g. http://0.0.0.0:3000) which is useless in a redirect, so prefer
+// the forwarded/host headers set by the reverse proxy or the browser.
+function requestOrigin(req: NextRequest): string {
+  const host = req.headers.get("x-forwarded-host")?.split(",")[0]?.trim() || req.headers.get("host");
+  if (host) {
+    const proto = req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() || new URL(req.url).protocol.replace(":", "");
+    return `${proto}://${host}`;
+  }
+  return new URL(req.url).origin;
+}
+
 // GET /api/files/[id] — returns file metadata + download URLs (verified owner)
 // Or streams file if ?download=1
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
   if (!user) return noStore(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
-  // 90/min per user + 60/min per IP burst fuse
+
+  const { searchParams } = new URL(req.url);
+  const download = searchParams.get("download") === "1";
+  const thumbnail = searchParams.get("thumbnail") === "1";
+
+  // Validate query params strictly (before doing any work)
+  const allowedParams = new Set(["download", "proxy", "thumbnail", "redirect", "inline"]);
+  for (const k of searchParams.keys()) {
+    if (!allowedParams.has(k)) return noStore(NextResponse.json({ error: "Invalid query param" }, { status: 400 }));
+  }
+
+  // Thumbnails/metadata are cheap reads (no bytes streamed here) — keep them
+  // off the tight download fuse so media grids render without 429s.
+  const bucket = download ? "download" : "preview";
   const dlIp = req.headers.get("cf-connecting-ip") || req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
-  let dlRl: ReturnType<typeof checkRateLimit> | null = null;
   try {
-    dlRl = checkRateLimitWithIp(user.id, dlIp, "download");
+    checkRateLimitWithIp(user.id, dlIp, bucket);
   } catch (e: unknown) {
     const r = (e as unknown as { result?: ReturnType<typeof checkRateLimit> }).result;
     const h = r ? rateLimitHeaders(r) : {};
@@ -41,19 +65,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return noStore(NextResponse.json({ error: "Invalid id" }, { status: 400 }));
   }
 
-  const files = await getFilesForUser(user.id);
-  const file = files.find((f) => f.id === id);
+  const file = await getFileById(user.id, id);
   if (!file) return noStore(NextResponse.json({ error: "File not found" }, { status: 404 }));
-
-  const { searchParams } = new URL(req.url);
-  const download = searchParams.get("download") === "1";
-  const thumbnail = searchParams.get("thumbnail") === "1";
-
-  // Validate query params strictly
-  const allowedParams = new Set(["download", "proxy", "thumbnail", "redirect", "inline"]);
-  for (const k of searchParams.keys()) {
-    if (!allowedParams.has(k)) return noStore(NextResponse.json({ error: "Invalid query param" }, { status: 400 }));
-  }
 
   // Thumbnail request: return thumbnail URL if exists, else primary
   if (thumbnail) {
@@ -63,8 +76,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       if (searchParams.get("redirect") === "0") {
         return noStore(NextResponse.json({ url }, { headers: { "Cache-Control": "private, max-age=3600" } }));
       }
-      // Redirects to Telegram CDN — cache privately for 1h (still requires Telegram token)
-      return NextResponse.redirect(url, { headers: { "Cache-Control": "private, max-age=3600" } } as unknown as ResponseInit);
+      // Redirects to Telegram CDN — cache privately for 1h. Resolve relative
+      // (local-storage) URLs against this origin or Response.redirect throws.
+      const target = url.startsWith("/") ? `${requestOrigin(req)}${url}` : url;
+      return NextResponse.redirect(target, { headers: { "Cache-Control": "private, max-age=3600" } } as unknown as ResponseInit);
     } catch {
       return noStore(NextResponse.json({ error: "Could not get thumbnail" }, { status: 500 }));
     }
@@ -152,22 +167,37 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       if (searchParams.get("proxy") === "1") {
         const sameOrigin = url.startsWith("/");
         const cookie = req.headers.get("cookie") ?? "";
-        const upstream = await fetch(url, {
+        // Relative local-storage URLs must be expanded — Node fetch() needs absolute URLs
+        const fetchUrl = sameOrigin ? `${new URL(req.url).origin}${url}` : url;
+        const upstreamHeaders: Record<string, string> = {};
+        if (sameOrigin && cookie) upstreamHeaders.cookie = cookie;
+        // Forward HTTP Range so <video> previews start instantly and can seek.
+        // Telegram's file endpoint answers with 206 + Content-Range; if it
+        // ignores Range we transparently fall back to a full 200 stream.
+        const range = req.headers.get("range");
+        if (range) upstreamHeaders.range = range;
+        const upstream = await fetch(fetchUrl, {
           cache: "no-store",
-          headers: sameOrigin && cookie ? { cookie } : undefined,
+          headers: Object.keys(upstreamHeaders).length ? upstreamHeaders : undefined,
         });
-        if (!upstream.ok) return noStore(NextResponse.json({ error: "Upstream failed" }, { status: 502 }));
+        if (upstream.status !== 200 && upstream.status !== 206 && upstream.status !== 416) {
+          return noStore(NextResponse.json({ error: "Upstream failed" }, { status: 502 }));
+        }
         const headers = new Headers();
         headers.set("Content-Type", file.mimeType || "application/octet-stream");
         const inline2 = searchParams.get("inline") === "1";
         headers.set("Content-Disposition", `${inline2 ? "inline" : "attachment"}; filename="${encodeURIComponent(file.name)}"`);
         headers.set("X-Content-Type-Options", "nosniff");
         headers.set("Cache-Control", "no-store");
-        if (upstream.headers.get("content-length")) headers.set("Content-Length", upstream.headers.get("content-length")!);
-        return new NextResponse(upstream.body, { headers });
+        for (const h of ["Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"]) {
+          const v = upstream.headers.get(h);
+          if (v) headers.set(h, v);
+        }
+        return new NextResponse(upstream.body, { status: upstream.status, headers });
       }
-      // Redirect to Telegram CDN
-      return NextResponse.redirect(url, { headers: { "Cache-Control": "private, max-age=3600" } } as unknown as ResponseInit);
+      // Redirect to Telegram CDN (resolve relative local-storage URLs first)
+      const target = url.startsWith("/") ? `${requestOrigin(req)}${url}` : url;
+      return NextResponse.redirect(target, { headers: { "Cache-Control": "private, max-age=3600" } } as unknown as ResponseInit);
     }
     return noStore(
       NextResponse.json({
@@ -303,8 +333,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const { id } = await params;
   if (!id || !/^[a-zA-Z0-9_-]{6,64}$/.test(id)) return noStore(NextResponse.json({ error: "Invalid id" }, { status: 400 }));
 
-  const files = await getFilesForUser(user.id);
-  const file = files.find((f) => f.id === id);
+  const file = await getFileById(user.id, id);
   if (!file) return noStore(NextResponse.json({ error: "File not found" }, { status: 404 }));
 
   await removeFile(id, user.id);

@@ -29,7 +29,24 @@ A complete credentials sign-in experience for Next.js 16 with a private Telegram
 
 An account is an admin when its stored `role` is `"admin"` (promotable from the
 Admin page) **or** its email is listed in `ADMIN_EMAILS` (comma-separated,
-case-insensitive) — use the env var as the bootstrap for the first admin.
+case-insensitive). To bootstrap the **first** admin (no admin exists yet to do
+the promoting):
+
+1. **CLI, takes effect immediately (no redeploy):**
+   ```bash
+   node scripts/set-admin.mjs you@example.com
+   # or: npm run make-admin -- you@example.com  (use --demote to revoke)
+   ```
+   Run it from the repo root with `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` in
+   the environment or in `.env` / `.env.local`. It edits the role directly in
+   the Telegram-backed database (or the local `.data/auth.json` dev fallback
+   when those vars are unset).
+2. **Env var:** set `ADMIN_EMAILS=you@example.com` (comma-separated list works),
+   then redeploy/restart. The account keeps admin rights only while its email
+   stays in the list.
+
+Afterwards the **Admin** section appears in the dashboard navigation
+(`/dashboard/admin`) — no re-login needed.
 
 ## Run locally
 

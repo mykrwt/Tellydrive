@@ -34,7 +34,7 @@ export function AuthForm({ mode, database, initialError }: Props) {
       <div className="card-heading">
         <p className="eyebrow">{isSignIn ? "Welcome back" : "Get started"}</p>
         <h1>{isSignIn ? "Sign in to Tellybase" : "Create your account"}</h1>
-        <p>{isSignIn ? "Enter your details to access your private workspace." : "One account. A private workspace backed by Telegram."}</p>
+        <p>{isSignIn ? "Welcome back to your vault." : "Your unlimited vault starts here."}</p>
       </div>
 
       <div className="auth-tabs" role="navigation" aria-label="Authentication">
@@ -106,7 +106,7 @@ export function AuthForm({ mode, database, initialError }: Props) {
 
       <div className={`database-status ${database}`}>
         <span className="status-dot" />
-        {database === "telegram" ? "Account database connected to Telegram" : database === "local" ? "Local database · development mode" : "Telegram database needs configuration"}
+        {database === "telegram" ? "Cloud account database connected" : database === "local" ? "Local database · development mode" : "Database needs configuration"}
       </div>
     </div>
   );

@@ -93,6 +93,8 @@ export const limits = {
   uploadPart: { limit: 800, windowMs: 60_000 },
   // Delete: 40/min
   delete: { limit: 40, windowMs: 60_000 },
+  // Folder operations (create/rename/move/delete): 60/min
+  folder: { limit: 60, windowMs: 60_000 },
   // Auth: 8/min per IP, stricter per IP+email
   auth: { limit: 8, windowMs: 10 * 60_000 },
   authStrict: { limit: 5, windowMs: 15 * 60_000 },

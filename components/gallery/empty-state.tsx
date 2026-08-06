@@ -32,7 +32,7 @@ export function EmptyState({ onUpload }: { onUpload: () => void }) {
         </svg>
         Upload photos & videos
       </button>
-      <span className="empty-hint">Future-ready for folders, albums, favorites & AI search</span>
+      <span className="empty-hint">Non-media files live in the Files section — create folders, move, rename &amp; organize them there.</span>
     </motion.div>
   );
 }

@@ -15,11 +15,11 @@ const scrypt = promisify(scryptCallback);
 const COOKIE_NAME = "tellybase_session";
 
 type SessionPayload = { sub: string; exp: number };
-export type SafeUser = Pick<StoredUser, "id" | "name" | "email" | "createdAt" | "lastLoginAt">;
+export type SafeUser = Pick<StoredUser, "id" | "name" | "email" | "createdAt" | "lastLoginAt" | "role">;
 
 function safeUser(user: StoredUser): SafeUser {
-  const { id, name, email, createdAt, lastLoginAt } = user;
-  return { id, name, email, createdAt, lastLoginAt };
+  const { id, name, email, createdAt, lastLoginAt, role } = user;
+  return { id, name, email, createdAt, lastLoginAt, role };
 }
 
 export function normalizeEmail(value: string): string {

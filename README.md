@@ -11,6 +11,26 @@ A complete credentials sign-in experience for Next.js 16 with a private Telegram
 - Responsive dark UI with loading, validation, error, and connection states
 - Local JSON fallback during development so the flow can be tested immediately
 
+### Storage sections
+
+- **Gallery** (`/dashboard`) — photos and videos only, with a Google Photos–style
+  browsing experience: day-grouped grid ("Today", "Yesterday", dates), hover
+  selection, lightbox viewer, search, filters, chunked uploads up to 2 GB.
+- **Files** (`/dashboard/files`) — a traditional file manager with folders and
+  subfolders: create/rename/move/delete folders, upload files into any folder,
+  move/rename/delete files, breadcrumb navigation, grid & list views, previews
+  for images/videos, and downloads. Documents, archives, audio and other safe
+  file types are supported here.
+- **Admin** (`/dashboard/admin`) — administrator-only page with upload &
+  file management, instance statistics (users, files, folders, storage),
+  a user table with role management, and reserved slots for future admin tools.
+
+### Admin accounts
+
+An account is an admin when its stored `role` is `"admin"` (promotable from the
+Admin page) **or** its email is listed in `ADMIN_EMAILS` (comma-separated,
+case-insensitive) — use the env var as the bootstrap for the first admin.
+
 ## Run locally
 
 ```bash

@@ -7,7 +7,6 @@ import { GalleryGrid } from "./gallery-grid";
 import { GalleryList } from "./gallery-list";
 import { GalleryViewer } from "./viewer";
 import { UploadQueue, type QueueItem } from "./upload-queue";
-import { Breadcrumbs } from "./breadcrumbs";
 import { DragDropOverlay } from "./drag-drop-overlay";
 import { SelectionBar } from "./selection-bar";
 import { ContextMenu } from "./context-menu";
@@ -30,7 +29,6 @@ export type ClientFile = {
 };
 
 type ViewMode = "grid" | "list";
-type Tab = "gallery" | "files";
 
 // ── Client cache: queryKey -> { data, total, expires } ──
 type CacheEntry = { files: ClientFile[]; total: number; etag?: string; expires: number };
@@ -63,7 +61,6 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
   const [sortBy, setSortBy] = useState<"date" | "name" | "size">("date");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [view, setView] = useState<ViewMode>("grid");
-  const [tab, setTab] = useState<Tab>("gallery");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [dragOver, setDragOver] = useState(false);
@@ -84,15 +81,10 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
   useEffect(() => {
     const saved = localStorage.getItem("tellybase:view") as ViewMode | null;
     if (saved === "grid" || saved === "list") setView(saved);
-    const savedTab = localStorage.getItem("tellybase:tab") as Tab | null;
-    if (savedTab === "gallery" || savedTab === "files") setTab(savedTab);
   }, []);
   useEffect(() => {
     localStorage.setItem("tellybase:view", view);
   }, [view]);
-  useEffect(() => {
-    localStorage.setItem("tellybase:tab", tab);
-  }, [tab]);
 
   // Optimised fetch with client cache, dedup, abort, ETag and stale-while-revalidate
   const fetchFiles = useCallback(
@@ -144,6 +136,8 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
           mime,
           sortBy,
           sortOrder,
+          // The gallery is photos & videos only
+          media: "1",
         });
 
         // ETag: send If-None-Match if we have etag for this key
@@ -468,16 +462,9 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
     <div ref={dropRef} className="gallery-root">
       <div className="gallery-topbar">
         <div className="gallery-topbar-left">
-          <div className="gallery-tabs" role="tablist">
-            <button role="tab" aria-selected={tab === "gallery"} className={tab === "gallery" ? "active" : ""} onClick={() => setTab("gallery")}>
-              <span className="tab-icon">◈</span> Gallery
-            </button>
-            <button role="tab" aria-selected={tab === "files"} className={tab === "files" ? "active" : ""} onClick={() => setTab("files")}>
-              <span className="tab-icon">▦</span> Files
-            </button>
-          </div>
-          <div className="gallery-path">
-            <Breadcrumbs />
+          <div className="gallery-page-title">
+            <h1>Photos</h1>
+            <span>Photos &amp; videos, all in one place</span>
           </div>
         </div>
         <div className="gallery-topbar-right">

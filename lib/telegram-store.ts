@@ -12,6 +12,8 @@ export type StoredUser = {
   passwordSalt: string;
   createdAt: string;
   lastLoginAt: string | null;
+  // Role: "admin" grants access to the Admin page and tools
+  role?: "admin" | "user";
   // Kept for backward compat; UI hidden via feature flag
   telegramToken?: string;
   telegramChatId?: string;
@@ -82,7 +84,7 @@ type AuthDatabase = {
   updatedAt: string;
   users: StoredUser[];
   files: StoredFile[];
-  folders?: StoredFolder[];
+  folders: StoredFolder[];
   albums?: StoredAlbum[];
 };
 
@@ -125,6 +127,7 @@ function isStoredUser(value: unknown): value is StoredUser {
     typeof user.passwordSalt === "string" &&
     typeof user.createdAt === "string" &&
     (typeof user.lastLoginAt === "string" || user.lastLoginAt === null) &&
+    (user.role === undefined || user.role === "admin" || user.role === "user") &&
     (user.telegramToken === undefined || typeof user.telegramToken === "string") &&
     (user.telegramChatId === undefined || typeof user.telegramChatId === "string")
   );
@@ -549,6 +552,225 @@ export async function moveFileToTrash(fileId: string, userId: string): Promise<v
     if (!file) throw new AccountStoreError("File not found.");
     file.trashed = true;
     file.trashedAt = new Date().toISOString();
+    database.revision += 1;
+    database.updatedAt = new Date().toISOString();
+    await save(database);
+  });
+}
+
+// ── Folder operations (Files section) ──
+
+export async function getFoldersForUser(userId: string, parentId?: string | null): Promise<StoredFolder[]> {
+  return serialized(async () => {
+    const database = await load();
+    const owned = database.folders.filter((f) => f.userId === userId);
+    if (parentId === undefined) return owned;
+    return owned.filter((f) => (f.parentId ?? null) === parentId);
+  });
+}
+
+export async function getFolderById(userId: string, folderId: string): Promise<StoredFolder | null> {
+  return serialized(async () => {
+    const database = await load();
+    return database.folders.find((f) => f.id === folderId && f.userId === userId) ?? null;
+  });
+}
+
+export async function getFolderPath(userId: string, folderId: string | null): Promise<StoredFolder[]> {
+  return serialized(async () => {
+    const database = await load();
+    const owned = database.folders.filter((f) => f.userId === userId);
+    const byId = new Map(owned.map((f) => [f.id, f]));
+    const path: StoredFolder[] = [];
+    let current = folderId ? byId.get(folderId) : undefined;
+    while (current) {
+      path.unshift(current);
+      current = current.parentId ? byId.get(current.parentId) : undefined;
+    }
+    return path;
+  });
+}
+
+export async function createFolder(userId: string, name: string, parentId: string | null): Promise<StoredFolder> {
+  const { validateFolderName } = await import("./validation");
+  const safeName = validateFolderName(name);
+  return serialized(async () => {
+    const database = await load();
+    if (parentId) {
+      const parent = database.folders.find((f) => f.id === parentId && f.userId === userId);
+      if (!parent) throw new AccountStoreError("Folder not found.");
+    }
+    const duplicate = database.folders.some(
+      (f) => f.userId === userId && (f.parentId ?? null) === parentId && f.name.toLowerCase() === safeName.toLowerCase()
+    );
+    if (duplicate) throw new AccountStoreError("A folder with that name already exists here.");
+    const folder: StoredFolder = {
+      id: randomUUID(),
+      userId,
+      name: safeName,
+      parentId,
+      createdAt: new Date().toISOString(),
+    };
+    database.folders.push(folder);
+    database.revision += 1;
+    database.updatedAt = new Date().toISOString();
+    await save(database);
+    return folder;
+  });
+}
+
+export async function renameFolder(userId: string, folderId: string, name: string): Promise<void> {
+  const { validateFolderName } = await import("./validation");
+  const safeName = validateFolderName(name);
+  return serialized(async () => {
+    const database = await load();
+    const folder = database.folders.find((f) => f.id === folderId && f.userId === userId);
+    if (!folder) throw new AccountStoreError("Folder not found.");
+    const duplicate = database.folders.some(
+      (f) => f.id !== folderId && f.userId === userId && (f.parentId ?? null) === (folder.parentId ?? null) && f.name.toLowerCase() === safeName.toLowerCase()
+    );
+    if (duplicate) throw new AccountStoreError("A folder with that name already exists here.");
+    folder.name = safeName;
+    database.revision += 1;
+    database.updatedAt = new Date().toISOString();
+    await save(database);
+  });
+}
+
+export async function moveFolder(userId: string, folderId: string, newParentId: string | null): Promise<void> {
+  return serialized(async () => {
+    const database = await load();
+    const folder = database.folders.find((f) => f.id === folderId && f.userId === userId);
+    if (!folder) throw new AccountStoreError("Folder not found.");
+    if ((folder.parentId ?? null) === newParentId) return;
+    if (newParentId === folderId) throw new AccountStoreError("A folder cannot be moved inside itself.");
+    if (newParentId) {
+      const parent = database.folders.find((f) => f.id === newParentId && f.userId === userId);
+      if (!parent) throw new AccountStoreError("Destination folder not found.");
+      // Cycle detection: destination must not be the folder or one of its descendants
+      let cursor: StoredFolder | undefined = parent;
+      const seen = new Set<string>();
+      while (cursor) {
+        if (cursor.id === folderId) throw new AccountStoreError("A folder cannot be moved inside one of its subfolders.");
+        if (seen.has(cursor.id)) break;
+        seen.add(cursor.id);
+        const pid: string | null = cursor.parentId;
+        cursor = pid ? database.folders.find((f) => f.id === pid && f.userId === userId) : undefined;
+      }
+    }
+    const duplicate = database.folders.some(
+      (f) => f.id !== folderId && f.userId === userId && (f.parentId ?? null) === newParentId && f.name.toLowerCase() === folder.name.toLowerCase()
+    );
+    if (duplicate) throw new AccountStoreError("A folder with that name already exists at the destination.");
+    folder.parentId = newParentId;
+    database.revision += 1;
+    database.updatedAt = new Date().toISOString();
+    await save(database);
+  });
+}
+
+export async function removeFolder(userId: string, folderId: string): Promise<{ movedFiles: number }> {
+  return serialized(async () => {
+    const database = await load();
+    const folder = database.folders.find((f) => f.id === folderId && f.userId === userId);
+    if (!folder) throw new AccountStoreError("Folder not found.");
+    const parentId = folder.parentId;
+
+    // Collect the folder and every descendant
+    const doomed = new Set<string>([folderId]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const f of database.folders) {
+        if (f.userId === userId && f.parentId && doomed.has(f.parentId) && !doomed.has(f.id)) {
+          doomed.add(f.id);
+          changed = true;
+        }
+      }
+    }
+
+    // Files inside deleted folders are moved up to the deleted folder's parent
+    // (never destroyed) so nothing is lost.
+    let movedFiles = 0;
+    for (const file of database.files) {
+      if (file.userId === userId && file.folderId && doomed.has(file.folderId)) {
+        file.folderId = parentId;
+        file.updatedAt = new Date().toISOString();
+        movedFiles += 1;
+      }
+    }
+
+    database.folders = database.folders.filter((f) => !doomed.has(f.id));
+    database.revision += 1;
+    database.updatedAt = new Date().toISOString();
+    await save(database);
+    return { movedFiles };
+  });
+}
+
+// ── Admin overview ──
+
+export type AdminUserRow = {
+  id: string;
+  name: string;
+  email: string;
+  role: "admin" | "user" | undefined;
+  createdAt: string;
+  lastLoginAt: string | null;
+  fileCount: number;
+  totalBytes: number;
+};
+
+export type AdminOverview = {
+  mode: "telegram" | "local" | "unconfigured";
+  revision: number;
+  updatedAt: string;
+  totals: { users: number; files: number; folders: number; bytes: number; images: number; videos: number; documents: number };
+  users: AdminUserRow[];
+};
+
+export async function getAdminOverview(): Promise<AdminOverview> {
+  return serialized(async () => {
+    const database = await load();
+    const totals = {
+      users: database.users.length,
+      files: database.files.length,
+      folders: database.folders.length,
+      bytes: database.files.reduce((sum, f) => sum + (f.size || 0), 0),
+      images: database.files.filter((f) => f.mimeType.startsWith("image/")).length,
+      videos: database.files.filter((f) => f.mimeType.startsWith("video/")).length,
+      documents: database.files.filter((f) => !f.mimeType.startsWith("image/") && !f.mimeType.startsWith("video/")).length,
+    };
+    const users: AdminUserRow[] = database.users.map((u) => {
+      const owned = database.files.filter((f) => f.userId === u.id);
+      return {
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        role: u.role,
+        createdAt: u.createdAt,
+        lastLoginAt: u.lastLoginAt,
+        fileCount: owned.length,
+        totalBytes: owned.reduce((sum, f) => sum + (f.size || 0), 0),
+      };
+    });
+    users.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return {
+      mode: databaseMode(),
+      revision: database.revision,
+      updatedAt: database.updatedAt,
+      totals,
+      users,
+    };
+  });
+}
+
+export async function setUserRole(userId: string, role: "admin" | "user"): Promise<void> {
+  return serialized(async () => {
+    const database = await load();
+    const user = database.users.find((u) => u.id === userId);
+    if (!user) throw new AccountStoreError("User not found.");
+    user.role = role;
     database.revision += 1;
     database.updatedAt = new Date().toISOString();
     await save(database);

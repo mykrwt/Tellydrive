@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { getFilesForUser, removeFile } from "@/lib/telegram-store";
+import { getFilesForUser, getFolderById, removeFile, updateFile } from "@/lib/telegram-store";
 import { getStorageFileUrl, getChunkUrls } from "@/lib/telegram-storage";
 import { checkRateLimit, checkRateLimitWithIp, getRetryAfterSec, rateLimitHeaders } from "@/lib/rate-limit";
+import { sanitizeFileName } from "@/lib/validation";
 import { invalidatePrefix } from "@/lib/api-cache";
 
 export const maxDuration = 60;
@@ -181,6 +182,91 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   } catch {
     return noStore(NextResponse.json({ error: "Could not get file" }, { status: 500 }));
   }
+}
+
+// PATCH /api/files/[id] — rename and/or move a file: { name?, folderId? }
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getCurrentUser();
+  if (!user) return noStore(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
+
+  const ip = req.headers.get("cf-connecting-ip") || req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  try {
+    checkRateLimitWithIp(user.id, ip, "folder");
+  } catch (e: unknown) {
+    const r = (e as unknown as { result?: ReturnType<typeof checkRateLimit> }).result;
+    const h = r ? rateLimitHeaders(r) : {};
+    const resetAt = (e as unknown as { resetAt: number }).resetAt ?? Date.now() + 60000;
+    return noStore(
+      NextResponse.json({ error: e instanceof Error ? e.message : "Too many requests" }, {
+        status: 429,
+        headers: { ...h, "Retry-After": String(getRetryAfterSec(resetAt)) },
+      })
+    );
+  }
+
+  // CSRF: same-origin
+  const origin = req.headers.get("origin");
+  const host = req.headers.get("host");
+  if (origin) {
+    try {
+      const o = new URL(origin);
+      if (o.host !== host && o.host !== req.headers.get("x-forwarded-host")) {
+        return noStore(NextResponse.json({ error: "Forbidden" }, { status: 403 }));
+      }
+    } catch {
+      return noStore(NextResponse.json({ error: "Invalid origin" }, { status: 400 }));
+    }
+  }
+
+  const ct = req.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) {
+    return noStore(NextResponse.json({ error: "Invalid content type" }, { status: 400 }));
+  }
+
+  const { id } = await params;
+  if (!id || !/^[a-zA-Z0-9_-]{6,64}$/.test(id)) return noStore(NextResponse.json({ error: "Invalid id" }, { status: 400 }));
+
+  let body: { name?: unknown; folderId?: unknown };
+  try {
+    body = (await req.json()) as typeof body;
+  } catch {
+    return noStore(NextResponse.json({ error: "Invalid JSON" }, { status: 400 }));
+  }
+
+  const hasName = typeof body.name === "string";
+  const hasFolder = "folderId" in body;
+  if (!hasName && !hasFolder) return noStore(NextResponse.json({ error: "Nothing to update" }, { status: 400 }));
+
+  const patch: { name?: string; folderId?: string | null } = {};
+  if (hasName) {
+    try {
+      patch.name = sanitizeFileName(body.name as string);
+    } catch {
+      return noStore(NextResponse.json({ error: "Invalid file name" }, { status: 400 }));
+    }
+  }
+  if (hasFolder) {
+    const folderId = body.folderId === null ? null : String(body.folderId);
+    if (folderId && !/^[a-zA-Z0-9_-]{6,64}$/.test(folderId)) {
+      return noStore(NextResponse.json({ error: "Invalid destination folder" }, { status: 400 }));
+    }
+    if (folderId) {
+      const folder = await getFolderById(user.id, folderId);
+      if (!folder) return noStore(NextResponse.json({ error: "Destination folder not found" }, { status: 404 }));
+    }
+    patch.folderId = folderId;
+  }
+
+  try {
+    await updateFile(user.id, id, patch);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Could not update file";
+    const status = msg.toLowerCase().includes("not found") ? 404 : 400;
+    return noStore(NextResponse.json({ error: msg }, { status }));
+  }
+  invalidatePrefix(`files:${user.id}:`);
+  invalidatePrefix(`folders:${user.id}:`);
+  return noStore(NextResponse.json({ ok: true }));
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

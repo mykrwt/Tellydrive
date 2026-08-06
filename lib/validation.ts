@@ -108,6 +108,95 @@ export function validateFileType(mime: string, name: string): { ok: boolean; kin
   return { ok: false, kind: "other" };
 }
 
+// ── Folder name validation (Files section) ──
+
+const ILLEGAL_FOLDER_CHARS = /[<>:"/\\|?*\x00-\x1F]/;
+
+export function validateFolderName(name: unknown): string {
+  const cleaned = String(name ?? "").normalize("NFKC").trim();
+  if (!cleaned) throw new Error("Folder name is required.");
+  if (cleaned === "." || cleaned === "..") throw new Error("Invalid folder name.");
+  if (cleaned.length > 100) throw new Error("Folder name must be 100 characters or fewer.");
+  if (ILLEGAL_FOLDER_CHARS.test(cleaned)) throw new Error('Folder name cannot contain < > : " / \\ | ? * characters.');
+  if (cleaned.startsWith(".")) throw new Error("Folder name cannot start with a dot.");
+  if (cleaned.endsWith(".") || cleaned.endsWith(" ")) throw new Error("Folder name cannot end with a dot or space.");
+  return cleaned;
+}
+
+// ── Generic file type validation (Files section) ──
+
+// Safe non-media extensions allowed in the Files section. Executables and
+// scriptable formats stay blocked (see BLOCKED_EXTENSIONS).
+const DOC_EXTENSIONS = new Set([
+  ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp",
+  ".txt", ".rtf", ".csv", ".md", ".json", ".xml", ".yaml", ".yml", ".log", ".sql",
+  ".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".tgz",
+  ".mp3", ".wav", ".ogg", ".opus", ".flac", ".aac", ".m4a", ".wma",
+  ".epub", ".mobi", ".ics", ".vcf", ".srt", ".vtt",
+  ".ttf", ".otf", ".woff", ".woff2", ".eot",
+  ".psd", ".ai", ".sketch", ".fig", ".sqlite", ".db",
+]);
+
+const SAFE_DOC_MIMES = new Set([
+  "application/pdf",
+  "application/json",
+  "application/xml",
+  "application/rtf",
+  "application/zip",
+  "application/x-zip-compressed",
+  "application/x-7z-compressed",
+  "application/x-rar-compressed",
+  "application/gzip",
+  "application/x-tar",
+  "application/x-bzip2",
+  "application/x-brotli",
+  "application/epub+zip",
+  "application/x-subrip",
+  "application/x-font-ttf",
+  "application/font-woff",
+  "application/font-woff2",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.oasis.opendocument.spreadsheet",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.oasis.opendocument.text",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.oasis.opendocument.presentation",
+  "application/vnd.apple.installer+xml", // safe XML-based
+]);
+
+export type FileKind = "image" | "video" | "audio" | "document" | "archive" | "other";
+
+export function validateAnyFileType(mime: string, name: string): { ok: boolean; kind: FileKind } {
+  const lowerMime = mime.toLowerCase().trim();
+  const lowerName = name.toLowerCase();
+
+  const blockedMimes = ["application/x-msdownload", "application/x-sh", "text/javascript", "application/javascript"];
+  if (blockedMimes.includes(lowerMime)) return { ok: false, kind: "other" };
+
+  if (lowerMime.startsWith("image/")) return { ok: true, kind: "image" };
+  if (lowerMime.startsWith("video/")) return { ok: true, kind: "video" };
+  if (lowerMime.startsWith("audio/")) return { ok: true, kind: "audio" };
+  if (lowerMime.startsWith("text/")) return { ok: true, kind: "document" };
+  if (SAFE_DOC_MIMES.has(lowerMime)) {
+    if (lowerMime === "application/zip" || lowerMime === "application/x-zip-compressed" || lowerMime === "application/x-7z-compressed" || lowerMime === "application/x-rar-compressed" || lowerMime === "application/gzip" || lowerMime === "application/x-tar" || lowerMime === "application/x-bzip2") {
+      return { ok: true, kind: "archive" };
+    }
+    return { ok: true, kind: "document" };
+  }
+
+  // Fallback: missing/generic MIME — decide by extension
+  const ext = path.extname(lowerName);
+  if (ext && DOC_EXTENSIONS.has(ext)) {
+    if ([".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".tgz"].includes(ext)) return { ok: true, kind: "archive" };
+    if ([".mp3", ".wav", ".ogg", ".opus", ".flac", ".aac", ".m4a", ".wma"].includes(ext)) return { ok: true, kind: "audio" };
+    return { ok: true, kind: "document" };
+  }
+  return { ok: false, kind: "other" };
+}
+
 export function validateFileSize(size: number): string | null {
   const MAX = 2 * 1024 * 1024 * 1024; // 2GB
   if (!Number.isFinite(size) || size <= 0) return "Invalid file size.";

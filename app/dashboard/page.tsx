@@ -1,12 +1,12 @@
 import { redirect } from "next/navigation";
-import { Logo } from "@/components/logo";
-import { SignOutButton } from "@/components/sign-out-button";
 import { getCurrentUser } from "@/lib/auth";
 import { findUserById, getFilesForUser, isTelegramSetupEnabled } from "@/lib/telegram-store";
+import { isAdminUser } from "@/lib/admin";
 import { Gallery } from "@/components/gallery";
+import { DashboardNav } from "@/components/dashboard-nav";
 import { TelegramSettings } from "@/components/telegram-settings";
 
-export const metadata = { title: "Dashboard" };
+export const metadata = { title: "Gallery" };
 
 export default async function DashboardPage() {
   let safeUser;
@@ -20,9 +20,14 @@ export default async function DashboardPage() {
   const user = await findUserById(safeUser.id);
   if (!user) redirect("/sign-in");
 
-  const files = await getFilesForUser(user.id, { sortBy: "date", sortOrder: "desc", limit: 48 });
+  const files = await getFilesForUser(user.id, { sortBy: "date", sortOrder: "desc", limit: 500 });
+  // Gallery only shows photos & videos — filter before slicing so the first
+  // paint isn't empty just because recent uploads were documents
+  const media = files
+    .filter((f) => f.mimeType.startsWith("image/") || f.mimeType.startsWith("video/"))
+    .slice(0, 48);
   // Only pass safe fields to client — never expose telegramFileId, tokens, or channel IDs
-  const safeFiles = files.map((f) => ({
+  const safeFiles = media.map((f) => ({
     id: f.id,
     name: f.name,
     size: f.size,
@@ -41,19 +46,7 @@ export default async function DashboardPage() {
 
   return (
     <main className="dashboard-page gallery-page">
-      <nav className="dashboard-nav gallery-nav">
-        <Logo />
-        <div className="gallery-nav-center">
-          <span className="gallery-title">Tellybase</span>
-          <span className="gallery-subtitle">Photos & Files</span>
-        </div>
-        <div className="gallery-nav-actions">
-          <span className="gallery-user">
-            {user.name.split(" ")[0]}
-          </span>
-          <SignOutButton />
-        </div>
-      </nav>
+      <DashboardNav userName={user.name} isAdmin={isAdminUser(user)} />
 
       {/* Hidden feature-flagged Telegram setup — not visible by default */}
       {showTelegramSetup && (

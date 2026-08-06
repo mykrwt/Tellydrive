@@ -1,6 +1,6 @@
-# Tellybase Auth
+# TellyDrive
 
-A complete credentials sign-in experience for Next.js 16 with a private Telegram chat acting as the production account database.
+A complete private cloud storage and credentials experience for Next.js 16 with a private Telegram chat acting as the production storage & account database.
 
 ## Features
 
@@ -16,11 +16,11 @@ A complete credentials sign-in experience for Next.js 16 with a private Telegram
 - **Gallery** (`/dashboard`) — photos and videos only, with a Google Photos–style
   browsing experience: day-grouped grid ("Today", "Yesterday", dates), hover
   selection, lightbox viewer, search, filters, chunked uploads up to 2 GB.
-- **Files** (`/dashboard/files`) — a traditional file manager with folders and
+- **Files** (`/dashboard/files`) — a full-featured cloud file manager with folders and
   subfolders: create/rename/move/delete folders, upload files into any folder,
-  move/rename/delete files, breadcrumb navigation, grid & list views, previews
-  for images/videos, and downloads. Documents, archives, audio and other safe
-  file types are supported here.
+  category filtering (Documents, Media, Audio, Archives), move/rename/delete files,
+  breadcrumb navigation, grid & list views, previews for images/videos/audio/docs,
+  and downloads.
 - **Admin** (`/dashboard/admin`) — administrator-only page with upload &
   file management, instance statistics (users, files, folders, storage),
   a user table with role management, and reserved slots for future admin tools.
@@ -60,7 +60,7 @@ Open <http://localhost:3000>. Without Telegram variables, development uses `.dat
 ## Connect Telegram for production
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) and copy its token.
-2. Create a **private channel or supergroup dedicated to Tellybase** (basic groups are not supported).
+2. Create a **private channel or supergroup dedicated to TellyDrive** (basic groups are not supported).
 3. Add the bot as an administrator with permission to:
    - **Post Messages** (to upload database revisions)
    - **Edit Chat Info** ("Change Channel Info" / "Change Group Info", so the bot can update the `TBAUTH:<file_id>` pointer in the description)
@@ -75,7 +75,7 @@ SESSION_SECRET=optional_random_32_byte_secret
 
 `SESSION_SECRET` is recommended; if absent, the server derives session signatures from the bot token. Never prefix Telegram variables with `NEXT_PUBLIC_`. Do not wrap values in quotes or include a `bot` prefix in `TELEGRAM_BOT_TOKEN`.
 
-The app uploads `tellybase-auth-rN.json` to the private chat and saves the latest Telegram `file_id` in the chat description as `TBAUTH:<file_id>`.
+The app uploads `tellydrive-auth-rN.json` to the private chat and saves the latest Telegram `file_id` in the chat description as `TBAUTH:<file_id>`.
 
 ## Troubleshooting Telegram setup
 

@@ -79,11 +79,11 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
 
   // View persistence
   useEffect(() => {
-    const saved = localStorage.getItem("tellybase:view") as ViewMode | null;
+    const saved = (localStorage.getItem("tellydrive:view") || localStorage.getItem("tellybase:view")) as ViewMode | null;
     if (saved === "grid" || saved === "list") setView(saved);
   }, []);
   useEffect(() => {
-    localStorage.setItem("tellybase:view", view);
+    localStorage.setItem("tellydrive:view", view);
   }, [view]);
 
   // Optimised fetch with client cache, dedup, abort, ETag and stale-while-revalidate
@@ -285,6 +285,7 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
         mimeType: file.type || "application/octet-stream",
         uploadId,
         parts: tokens,
+        source: "gallery",
       }),
     }, 2);
     const finData = (await fin.json().catch(() => ({}))) as { id?: string; error?: string };
@@ -315,6 +316,7 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
           } else {
             const fd = new FormData();
             fd.append("file", item.file, item.file.name);
+            fd.append("source", "gallery");
             const res = await fetchWithRetry("/api/files", { method: "POST", body: fd }, 2);
             const data = (await res.json().catch(() => ({}))) as { results?: Array<{ ok: boolean; error?: string }>; error?: string };
             if (!res.ok && !data.results) throw new Error(data.error || "Upload failed");

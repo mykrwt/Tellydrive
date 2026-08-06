@@ -58,6 +58,8 @@ export async function GET(req: NextRequest) {
   const folderIdParam = searchParams.get("folderId");
   const root = searchParams.get("root") === "1";
   const mediaOnly = searchParams.get("media") === "1";
+  const sectionParam = searchParams.get("section") as "gallery" | "files" | "admin" | null;
+  const excludeGallery = searchParams.get("excludeGallery") === "1" || sectionParam === "files";
 
   const validSort = new Set(["name", "size", "date"]);
   const safeSortBy = validSort.has(sortBy) ? sortBy : "date";
@@ -73,7 +75,7 @@ export async function GET(req: NextRequest) {
   const folderScope: string | null | undefined = root ? null : folderIdParam ?? undefined;
 
   // Cache key: user + exact query; TTL 10s, stale-while-revalidate via client
-  const cacheKey = `files:${user.id}:${search}:${mime}:${safeSortBy}:${safeSortOrder}:${folderScope === undefined ? "all" : folderScope ?? "root"}:${mediaOnly ? "media" : ""}:${limit}:${offset}`;
+  const cacheKey = `files:${user.id}:${search}:${mime}:${safeSortBy}:${safeSortOrder}:${folderScope === undefined ? "all" : folderScope ?? "root"}:${mediaOnly ? "media" : ""}:${sectionParam || ""}:${excludeGallery ? "exclGal" : ""}:${limit}:${offset}`;
   try {
     const { value, etag, hit } = await cachedFetch(cacheKey, 10_000, async () => {
       const all = await getFilesPaginated(user.id, {
@@ -82,6 +84,8 @@ export async function GET(req: NextRequest) {
         sortBy: safeSortBy,
         sortOrder: safeSortOrder,
         folderId: folderScope,
+        section: sectionParam ?? undefined,
+        excludeGallery,
         limit: mediaOnly ? 10000 : limit,
         offset: 0,
       });
@@ -204,6 +208,13 @@ export async function POST(req: NextRequest) {
     if (!folder) return withSecurity(NextResponse.json({ error: "Target folder not found" }, { status: 404 }));
   }
   const allowAny = form.get("allowAny") === "1";
+  const sourceRaw = form.get("source");
+  const source =
+    sourceRaw === "gallery" || sourceRaw === "files" || sourceRaw === "admin"
+      ? (sourceRaw as "gallery" | "files" | "admin")
+      : allowAny || folderId
+        ? "files"
+        : "gallery";
   const typeCheck = allowAny ? validateAnyFileType : validateFileType;
 
   for (const f of allFiles) {
@@ -239,6 +250,7 @@ export async function POST(req: NextRequest) {
         chunkCount: result.chunkCount,
         chunks: result.chunks,
         folderId,
+        source,
         favorite: false,
         trashed: false,
         version: 1,

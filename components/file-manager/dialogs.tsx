@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import type { ClientFile, ClientFolder } from "./helpers";
-import { fileKind, formatBytes } from "./helpers";
+import { fileKind, formatBytes, getFileKindMeta, fileExtension } from "./helpers";
 import type { MenuTarget } from "./context-menu";
 
 export type DialogState =
@@ -23,6 +23,7 @@ function useModal(onClose: () => void) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
   useEffect(() => {
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -33,7 +34,13 @@ function useModal(onClose: () => void) {
   return ref;
 }
 
-function ModalShell({ title, subtitle, onClose, children, wide }: {
+function ModalShell({
+  title,
+  subtitle,
+  onClose,
+  children,
+  wide,
+}: {
   title: string;
   subtitle?: string;
   onClose: () => void;
@@ -57,17 +64,17 @@ function ModalShell({ title, subtitle, onClose, children, wide }: {
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        initial={{ opacity: 0, y: 14, scale: 0.985 }}
+        initial={{ opacity: 0, y: 16, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 14, scale: 0.985 }}
-        transition={{ duration: 0.2, ease: [0.2, 0.7, 0.2, 1] }}
+        exit={{ opacity: 0, y: 16, scale: 0.98 }}
+        transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
       >
         <div className="modal-head">
-          <div>
+          <div className="modal-head-titles">
             <h3>{title}</h3>
             {subtitle && <p>{subtitle}</p>}
           </div>
-          <button className="modal-close" onClick={onClose} aria-label="Close">
+          <button className="modal-close" onClick={onClose} aria-label="Close dialog">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M18 6L6 18" />
               <path d="M6 6l12 12" />
@@ -81,7 +88,11 @@ function ModalShell({ title, subtitle, onClose, children, wide }: {
 }
 
 // ── New folder ──
-export function NewFolderDialog({ parentName, onClose, onSubmit }: {
+export function NewFolderDialog({
+  parentName,
+  onClose,
+  onSubmit,
+}: {
   parentName: string;
   onClose: () => void;
   onSubmit: (name: string) => Promise<void>;
@@ -89,13 +100,14 @@ export function NewFolderDialog({ parentName, onClose, onSubmit }: {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     inputRef.current?.focus();
     inputRef.current?.select();
   }, []);
 
   return (
-    <ModalShell title="New folder" subtitle={`Will be created inside “${parentName}”`} onClose={onClose}>
+    <ModalShell title="New folder" subtitle={`Location: ${parentName}`} onClose={onClose}>
       <form
         className="modal-form"
         onSubmit={async (e) => {
@@ -109,19 +121,24 @@ export function NewFolderDialog({ parentName, onClose, onSubmit }: {
           }
         }}
       >
-        <input
-          ref={inputRef}
-          className="modal-input"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Folder name"
-          maxLength={100}
-          aria-label="Folder name"
-        />
+        <div className="modal-input-wrap">
+          <input
+            ref={inputRef}
+            className="modal-input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Project Documents"
+            maxLength={100}
+            aria-label="Folder name"
+            disabled={busy}
+          />
+        </div>
         <div className="modal-actions">
-          <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn-ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
           <button type="submit" className="btn-primary" disabled={!name.trim() || busy}>
-            {busy ? "Creating…" : "Create"}
+            {busy ? "Creating…" : "Create Folder"}
           </button>
         </div>
       </form>
@@ -130,7 +147,11 @@ export function NewFolderDialog({ parentName, onClose, onSubmit }: {
 }
 
 // ── Rename ──
-export function RenameDialog({ target, onClose, onSubmit }: {
+export function RenameDialog({
+  target,
+  onClose,
+  onSubmit,
+}: {
   target: MenuTarget;
   onClose: () => void;
   onSubmit: (name: string) => Promise<void>;
@@ -138,6 +159,7 @@ export function RenameDialog({ target, onClose, onSubmit }: {
   const [name, setName] = useState(target.name);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     inputRef.current?.focus();
     // Select the stem, not the extension, when renaming a file
@@ -161,16 +183,21 @@ export function RenameDialog({ target, onClose, onSubmit }: {
           }
         }}
       >
-        <input
-          ref={inputRef}
-          className="modal-input"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          maxLength={255}
-          aria-label="New name"
-        />
+        <div className="modal-input-wrap">
+          <input
+            ref={inputRef}
+            className="modal-input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={255}
+            aria-label="New name"
+            disabled={busy}
+          />
+        </div>
         <div className="modal-actions">
-          <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn-ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
           <button type="submit" className="btn-primary" disabled={!name.trim() || busy}>
             {busy ? "Renaming…" : "Rename"}
           </button>
@@ -219,7 +246,12 @@ function collectDescendants(tree: TreeFolder[], id: string): Set<string> {
   return out;
 }
 
-export function MoveDialog({ targets, currentFolderId, onClose, onSubmit }: {
+export function MoveDialog({
+  targets,
+  currentFolderId,
+  onClose,
+  onSubmit,
+}: {
   targets: MenuTarget[];
   currentFolderId: string | null;
   onClose: () => void;
@@ -239,7 +271,6 @@ export function MoveDialog({ targets, currentFolderId, onClose, onSubmit }: {
         if (cancelled) return;
         const list = data.folders ?? [];
         setAll(list);
-        // Expand the top level by default so the tree is immediately navigable
         setExpanded(new Set(list.map((n) => n.id)));
       })
       .catch(() => {
@@ -265,6 +296,7 @@ export function MoveDialog({ targets, currentFolderId, onClose, onSubmit }: {
   const select = useCallback((id: string | null) => {
     setDestination(id);
   }, []);
+
   const toggleExpand = useCallback((id: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -283,7 +315,7 @@ export function MoveDialog({ targets, currentFolderId, onClose, onSubmit }: {
       <div key={node.id}>
         <div
           className={`fm-tree-row ${isDest ? "dest" : ""} ${disabled ? "disabled" : ""}`}
-          style={{ paddingLeft: 14 + depth * 18 }}
+          style={{ paddingLeft: 12 + depth * 16 }}
         >
           <button
             type="button"
@@ -293,7 +325,15 @@ export function MoveDialog({ targets, currentFolderId, onClose, onSubmit }: {
             tabIndex={hasChildren ? 0 : -1}
           >
             {hasChildren ? (
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" style={{ transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s" }}>
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                style={{ transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s" }}
+              >
                 <path d="M9 18l6-6-6-6" />
               </svg>
             ) : (
@@ -307,10 +347,10 @@ export function MoveDialog({ targets, currentFolderId, onClose, onSubmit }: {
             onClick={() => select(node.id)}
             title={node.name}
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#93a0f5" strokeWidth="1.8">
               <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
             </svg>
-            <span>{node.name}</span>
+            <span className="fm-tree-folder-name">{node.name}</span>
             {disabled && <span className="mini-badge">current</span>}
           </button>
         </div>
@@ -322,16 +362,16 @@ export function MoveDialog({ targets, currentFolderId, onClose, onSubmit }: {
   const label = targets.length === 1 ? (targets[0].type === "folder" ? "folder" : "file") : `${targets.length} items`;
 
   return (
-    <ModalShell title={`Move ${label}`} subtitle="Choose a destination folder" onClose={onClose} wide>
+    <ModalShell title={`Move ${label}`} subtitle="Select destination location" onClose={onClose} wide>
       <div className="modal-body">
         <div className="fm-tree">
-          <div className={`fm-tree-row ${destination === null ? "dest" : ""}`} style={{ paddingLeft: 14 }}>
+          <div className={`fm-tree-row ${destination === null ? "dest" : ""}`} style={{ paddingLeft: 12 }}>
             <span className="fm-tree-toggle" />
             <button type="button" className="fm-tree-label" onClick={() => select(null)}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" strokeWidth="1.8">
                 <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
               </svg>
-              <span>My Files (root)</span>
+              <span className="fm-tree-folder-name">My Files (Home)</span>
             </button>
           </div>
           {tree.map((n) => renderNode(n, 0))}
@@ -339,7 +379,9 @@ export function MoveDialog({ targets, currentFolderId, onClose, onSubmit }: {
         {loadError && <div className="queue-error">{loadError}</div>}
       </div>
       <div className="modal-actions">
-        <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
+        <button type="button" className="btn-ghost" onClick={onClose} disabled={busy}>
+          Cancel
+        </button>
         <button
           type="button"
           className="btn-primary"
@@ -353,7 +395,7 @@ export function MoveDialog({ targets, currentFolderId, onClose, onSubmit }: {
             }
           }}
         >
-          {busy ? "Moving…" : `Move here`}
+          {busy ? "Moving…" : "Move here"}
         </button>
       </div>
     </ModalShell>
@@ -361,7 +403,11 @@ export function MoveDialog({ targets, currentFolderId, onClose, onSubmit }: {
 }
 
 // ── Delete ──
-export function DeleteDialog({ targets, onClose, onSubmit }: {
+export function DeleteDialog({
+  targets,
+  onClose,
+  onSubmit,
+}: {
   targets: MenuTarget[];
   onClose: () => void;
   onSubmit: () => Promise<void>;
@@ -372,7 +418,7 @@ export function DeleteDialog({ targets, onClose, onSubmit }: {
   const total = targets.length;
 
   return (
-    <ModalShell title={`Delete ${total} ${total === 1 ? "item" : "items"}?`} subtitle="This cannot be undone" onClose={onClose}>
+    <ModalShell title={`Delete ${total} ${total === 1 ? "item" : "items"}?`} subtitle="This action cannot be undone" onClose={onClose}>
       <div className="modal-body">
         <p className="modal-copy">
           {folders > 0 && (
@@ -390,18 +436,22 @@ export function DeleteDialog({ targets, onClose, onSubmit }: {
         </p>
         {folders > 0 && (
           <p className="modal-copy muted">
-            Files inside deleted folders are not destroyed — they move up to the parent folder.
+            Files contained within deleted folders will automatically be moved to the parent folder.
           </p>
         )}
         <ul className="modal-name-list">
           {targets.slice(0, 8).map((t) => (
-            <li key={`${t.type}-${t.id}`} title={t.name}>{t.name}</li>
+            <li key={`${t.type}-${t.id}`} title={t.name}>
+              {t.type === "folder" ? "📁" : "📄"} {t.name}
+            </li>
           ))}
           {total > 8 && <li className="muted">…and {total - 8} more</li>}
         </ul>
       </div>
       <div className="modal-actions">
-        <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
+        <button type="button" className="btn-ghost" onClick={onClose} disabled={busy}>
+          Cancel
+        </button>
         <button
           type="button"
           className="btn-danger"
@@ -415,7 +465,7 @@ export function DeleteDialog({ targets, onClose, onSubmit }: {
             }
           }}
         >
-          {busy ? "Deleting…" : "Delete"}
+          {busy ? "Deleting…" : "Delete Permanently"}
         </button>
       </div>
     </ModalShell>
@@ -423,68 +473,115 @@ export function DeleteDialog({ targets, onClose, onSubmit }: {
 }
 
 // ── Preview ──
-export function PreviewDialog({ file, onClose, onDownload }: {
+export function PreviewDialog({
+  file,
+  onClose,
+  onDownload,
+}: {
   file: ClientFile;
   onClose: () => void;
   onDownload: () => void;
 }) {
   const kind = fileKind(file.mimeType, file.name);
+  const meta = getFileKindMeta(file.mimeType, file.name);
+  const ext = fileExtension(file.name).toUpperCase();
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const src = `/api/files/${file.id}?download=1&proxy=1&inline=1`;
 
-  const canShow = kind === "image" || kind === "video";
+  const isImage = kind === "image";
+  const isVideo = kind === "video";
+  const isAudio = kind === "audio";
 
   return (
-    <ModalShell title={file.name} subtitle={`${file.mimeType} • ${formatBytes(file.size)} • ${new Date(file.createdAt).toLocaleString()}`} onClose={onClose} wide>
+    <ModalShell
+      title={file.name}
+      subtitle={`${formatBytes(file.size)} • ${file.mimeType} • ${new Date(file.createdAt).toLocaleDateString(undefined, { dateStyle: "medium" })}`}
+      onClose={onClose}
+      wide
+    >
       <div className="modal-body preview-body">
-        {canShow ? (
+        {isImage ? (
           <>
             {!loaded && !error && (
               <div className="lightbox-loading">
                 <span className="spinner light" />
               </div>
             )}
-            {kind === "image" ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={src}
-                alt={file.name}
-                className="preview-media"
-                style={{ opacity: loaded ? 1 : 0 }}
-                onLoad={() => setLoaded(true)}
-                onError={() => { setError("Failed to load preview"); setLoaded(true); }}
-              />
-            ) : (
-              <video
-                src={src}
-                controls
-                autoPlay
-                playsInline
-                preload="metadata"
-                className="preview-media"
-                style={{ opacity: loaded ? 1 : 0 }}
-                onLoadedData={() => setLoaded(true)}
-                onError={() => setError("Failed to load preview")}
-              />
-            )}
-            {error && <div className="queue-error">{error}</div>}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={src}
+              alt={file.name}
+              className="preview-media"
+              style={{ opacity: loaded ? 1 : 0 }}
+              onLoad={() => setLoaded(true)}
+              onError={() => {
+                setError("Failed to load image preview");
+                setLoaded(true);
+              }}
+            />
           </>
+        ) : isVideo ? (
+          <>
+            {!loaded && !error && (
+              <div className="lightbox-loading">
+                <span className="spinner light" />
+              </div>
+            )}
+            <video
+              src={src}
+              controls
+              autoPlay
+              playsInline
+              preload="metadata"
+              className="preview-media"
+              style={{ opacity: loaded ? 1 : 0 }}
+              onLoadedData={() => setLoaded(true)}
+              onError={() => setError("Failed to load video stream")}
+            />
+          </>
+        ) : isAudio ? (
+          <div className="preview-audio-wrap">
+            <div className="preview-audio-icon" style={{ color: meta.accent, backgroundColor: meta.bg }}>
+              <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <path d="M9 18V5l12-2v13" />
+                <circle cx="6" cy="18" r="3" />
+                <circle cx="18" cy="16" r="3" />
+              </svg>
+            </div>
+            <div className="preview-audio-title">{file.name}</div>
+            <audio src={src} controls autoPlay className="preview-audio-player" />
+          </div>
         ) : (
-          <div className="preview-fallback">
-            <div className="fallback-icon">
-              <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <div className="preview-doc-wrap">
+            <div className="preview-doc-badge" style={{ color: meta.accent, backgroundColor: meta.bg, borderColor: meta.border }}>
+              <span className="preview-doc-ext">{meta.label || ext || "FILE"}</span>
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                 <polyline points="14 2 14 8 20 8" />
               </svg>
             </div>
-            <p>No preview available for this file type.</p>
+            <div className="preview-doc-details">
+              <h4>{file.name}</h4>
+              <p>{formatBytes(file.size)} • {file.mimeType || "Document"}</p>
+            </div>
           </div>
         )}
+
+        {error && <div className="queue-error">{error}</div>}
       </div>
       <div className="modal-actions">
-        <button type="button" className="btn-ghost" onClick={onClose}>Close</button>
-        <button type="button" className="btn-primary" onClick={onDownload}>Download</button>
+        <button type="button" className="btn-ghost" onClick={onClose}>
+          Close
+        </button>
+        <button type="button" className="btn-primary" onClick={onDownload}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          Download File
+        </button>
       </div>
     </ModalShell>
   );

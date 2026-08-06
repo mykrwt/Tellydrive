@@ -124,9 +124,9 @@ async function runTelegram() {
   form.append(
     "document",
     new Blob([JSON.stringify(db, null, 2)], { type: "application/json" }),
-    `tellybase-auth-r${db.revision}.json`
+    `tellydrive-auth-r${db.revision}.json`
   );
-  form.append("caption", `Tellybase auth database · revision ${db.revision}`);
+  form.append("caption", `TellyDrive auth database · revision ${db.revision}`);
   const upload = await fetch(`${apiBase}/bot${token}/sendDocument`, {
     method: "POST",
     body: form,

@@ -24,9 +24,9 @@ export default async function FilesPage() {
   // folder item counts are correct on first paint, matching the API payloads.
   const [folders, files, allFolders, allFiles] = await Promise.all([
     getFoldersForUser(user.id, null),
-    getFilesForUser(user.id, { folderId: null, sortBy: "name", sortOrder: "asc", limit: 500 }),
+    getFilesForUser(user.id, { folderId: null, section: "files", sortBy: "name", sortOrder: "asc", limit: 500 }),
     getFoldersForUser(user.id),
-    getFilesForUser(user.id),
+    getFilesForUser(user.id, { section: "files" }),
   ]);
 
   const itemCounts = new Map<string, number>();

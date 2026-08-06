@@ -12,7 +12,8 @@ import {
 } from "@/lib/telegram-store";
 
 const scrypt = promisify(scryptCallback);
-const COOKIE_NAME = "tellybase_session";
+const COOKIE_NAME = "tellydrive_session";
+const LEGACY_COOKIE_NAME = "tellybase_session";
 
 type SessionPayload = { sub: string; exp: number };
 export type SafeUser = Pick<StoredUser, "id" | "name" | "email" | "createdAt" | "lastLoginAt" | "role">;
@@ -208,10 +209,20 @@ export async function deleteSession(): Promise<void> {
     maxAge: 0,
     expires: new Date(0),
   });
+  cookieStore.set(LEGACY_COOKIE_NAME, "", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    path: "/",
+    maxAge: 0,
+    expires: new Date(0),
+  });
 }
 
 export async function getSessionUserId(): Promise<string | null> {
-  const payload = decodeSession((await cookies()).get(COOKIE_NAME)?.value);
+  const cookieStore = await cookies();
+  const token = cookieStore.get(COOKIE_NAME)?.value || cookieStore.get(LEGACY_COOKIE_NAME)?.value;
+  const payload = decodeSession(token);
   return payload?.sub ?? null;
 }
 

@@ -48,11 +48,12 @@ export type StoredFile = {
   chunkSize?: number;
   chunkCount?: number;
   chunks?: ChunkMeta[];
-  // Folder / organization (future-ready)
+  // Folder / organization
   folderId?: string | null;
   albumIds?: string[];
   favorite?: boolean;
   tags?: string[];
+  source?: "gallery" | "files" | "admin";
   // Access / trash
   trashed?: boolean;
   trashedAt?: string | null;
@@ -171,6 +172,7 @@ function parseDatabase(raw: string): AuthDatabase {
       chunked: Boolean(rec.chunked),
       chunkCount: (rec.chunkCount as number) ?? ((rec.chunks as unknown[]) ? (rec.chunks as unknown[]).length : undefined),
       folderId: (rec.folderId as string | null) ?? null,
+      source: (rec.source as "gallery" | "files" | "admin" | undefined),
       favorite: Boolean(rec.favorite),
       trashed: Boolean(rec.trashed),
       version: (rec.version as number) ?? 1,
@@ -288,8 +290,8 @@ async function saveTelegram(database: AuthDatabase): Promise<void> {
   const serialized = JSON.stringify(database, null, 2);
   const form = new FormData();
   form.append("chat_id", chatId);
-  form.append("document", new Blob([serialized], { type: "application/json" }), `tellybase-auth-r${database.revision}.json`);
-  form.append("caption", `Tellybase auth database · revision ${database.revision}`);
+  form.append("document", new Blob([serialized], { type: "application/json" }), `tellydrive-auth-r${database.revision}.json`);
+  form.append("caption", `TellyDrive auth database · revision ${database.revision}`);
   let response: Response;
   try {
     response = await fetch(`${apiBase}/bot${token}/sendDocument`, {
@@ -444,9 +446,12 @@ export async function updateUserSettings(
 export type FileQuery = {
   search?: string;
   mime?: "image" | "video" | "all";
+  source?: "gallery" | "files" | "admin";
+  section?: "gallery" | "files" | "admin";
+  excludeGallery?: boolean;
   sortBy?: "name" | "size" | "date";
   sortOrder?: "asc" | "desc";
-  folderId?: string | null; // future
+  folderId?: string | null;
   favorite?: boolean;
   trashed?: boolean;
   limit?: number;
@@ -459,6 +464,30 @@ function applyFilters(files: StoredFile[], q: FileQuery): StoredFile[] {
   // Hide trashed by default
   const showTrashed = q.trashed === true;
   out = out.filter((f) => (showTrashed ? f.trashed : !f.trashed));
+
+  // Section / source filtering
+  if (q.section === "files" || q.excludeGallery) {
+    // Exclude gallery items:
+    // 1) Files explicitly marked as source: 'gallery'
+    // 2) Files at root level with no folder and mimeType starting with image/ or video/, unless explicitly marked source: 'files'
+    out = out.filter((f) => {
+      if (f.source === "gallery") return false;
+      if (f.source === "files") return true;
+      if (f.folderId !== null && f.folderId !== undefined) return true;
+      if (f.mimeType.startsWith("image/") || f.mimeType.startsWith("video/")) return false;
+      return true;
+    });
+  } else if (q.section === "gallery") {
+    out = out.filter((f) => {
+      if (f.source === "gallery") return true;
+      if (f.mimeType.startsWith("image/") || f.mimeType.startsWith("video/")) return true;
+      return false;
+    });
+  }
+
+  if (q.source) {
+    out = out.filter((f) => f.source === q.source);
+  }
 
   if (q.mime && q.mime !== "all") {
     out = out.filter((f) => {

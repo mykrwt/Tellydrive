@@ -40,7 +40,7 @@ function formatTelegramError(message: string): string {
     return `${message}. Check TELEGRAM_BOT_TOKEN for typos or formatting issues.`;
   }
   if (lower.includes("supergroups and channels")) {
-    return `${message}. Tellybase requires a private channel or supergroup, not a basic group.`;
+    return `${message}. TellyDrive requires a private channel or supergroup, not a basic group.`;
   }
   if (lower.includes("bot was blocked") || lower.includes("not a member")) {
     return `${message}. Ensure the bot is added to your channel or supergroup as an administrator.`;

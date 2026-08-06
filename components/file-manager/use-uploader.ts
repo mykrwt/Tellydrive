@@ -58,6 +58,7 @@ export function useUploader(onComplete: () => Promise<void>) {
       fd.append("mimeType", file.type || "application/octet-stream");
       fd.append("uploadId", uploadId);
       fd.append("allowAny", "1");
+      fd.append("source", "files");
 
       let attempt = 0;
       let res: Response | null = null;
@@ -95,6 +96,7 @@ export function useUploader(onComplete: () => Promise<void>) {
         parts: tokens,
         folderId,
         allowAny: true,
+        source: "files",
       }),
     });
     if (!fin.ok) throw new Error(fin.data?.error || "Upload failed");
@@ -124,6 +126,7 @@ export function useUploader(onComplete: () => Promise<void>) {
             fd.append("file", item.file, item.file.name);
             fd.append("folderId", folderId ?? "root");
             fd.append("allowAny", "1");
+            fd.append("source", "files");
             const res = await api("/api/files", { method: "POST", body: fd });
             if (!res.ok) throw new Error(res.data?.error || "Upload failed");
             const result = res.data?.results?.[0];

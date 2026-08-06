@@ -9,7 +9,7 @@ import { Cta } from "@/components/landing/cta";
 import { Footer } from "@/components/landing/footer";
 
 export const metadata = {
-  title: { absolute: "Tellybase — Unlimited cloud storage" },
+  title: { absolute: "TellyDrive — Unlimited cloud storage" },
   description: "Unlimited space. Instant sync. Total privacy. Start free.",
 };
 

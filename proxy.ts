@@ -3,7 +3,8 @@ import { NextResponse, NextRequest } from "next/server";
 // Lightweight session check without importing server-only auth (decode here)
 // We duplicate minimal HMAC verify to keep middleware edge-compatible.
 
-const COOKIE_NAME = "tellybase_session";
+const COOKIE_NAME = "tellydrive_session";
+const LEGACY_COOKIE_NAME = "tellybase_session";
 
 function sessionSecret(): string {
   return (
@@ -130,7 +131,7 @@ export async function proxy(req: NextRequest) {
   const isProtected = pathname === "/dashboard" || pathname.startsWith("/dashboard/");
 
   if (isAuthPage || isProtected) {
-    const cookie = req.cookies.get(COOKIE_NAME)?.value;
+    const cookie = req.cookies.get(COOKIE_NAME)?.value || req.cookies.get(LEGACY_COOKIE_NAME)?.value;
     const valid = await verifySessionCookie(cookie);
     if (isProtected && !valid) {
       const url = req.nextUrl.clone();

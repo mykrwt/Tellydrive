@@ -33,7 +33,7 @@ export function AuthForm({ mode, database, initialError }: Props) {
     <div className="auth-card">
       <div className="card-heading">
         <p className="eyebrow">{isSignIn ? "Welcome back" : "Get started"}</p>
-        <h1>{isSignIn ? "Sign in to Tellybase" : "Create your account"}</h1>
+        <h1>{isSignIn ? "Sign in to TellyDrive" : "Create your account"}</h1>
         <p>{isSignIn ? "Welcome back to your vault." : "Your unlimited vault starts here."}</p>
       </div>
 
@@ -100,7 +100,7 @@ export function AuthForm({ mode, database, initialError }: Props) {
       </form>
 
       <p className="switch-copy">
-        {isSignIn ? "New to Tellybase?" : "Already have an account?"}{" "}
+        {isSignIn ? "New to TellyDrive?" : "Already have an account?"}{" "}
         <Link href={isSignIn ? "/sign-up" : "/sign-in"}>{isSignIn ? "Create an account" : "Sign in"}</Link>
       </p>
 

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { Upload } from "lucide-react";
 import { GalleryToolbar } from "./toolbar";
 import { GalleryGrid } from "./gallery-grid";
 import { GalleryList } from "./gallery-list";
@@ -11,7 +12,9 @@ import { DragDropOverlay } from "./drag-drop-overlay";
 import { SelectionBar } from "./selection-bar";
 import { ContextMenu } from "./context-menu";
 import { EmptyState } from "./empty-state";
+import { DashboardSummaryStrip, type DashboardSummaryData } from "@/components/dashboard/summary-strip";
 import { PART_UPLOAD_SIZE } from "@/lib/upload-config";
+
 export type ClientFile = {
   id: string;
   name: string;
@@ -30,7 +33,6 @@ export type ClientFile = {
 
 type ViewMode = "grid" | "list";
 
-// ── Client cache: queryKey -> { data, total, expires } ──
 type CacheEntry = { files: ClientFile[]; total: number; etag?: string; expires: number };
 const CLIENT_CACHE = new Map<string, CacheEntry>();
 const PENDING_REQUESTS = new Map<string, Promise<{ files: ClientFile[]; total: number; etag?: string }>>();
@@ -41,7 +43,6 @@ function cacheKeyFor(q: string, mime: string, sortBy: string, sortOrder: string,
   return `${q}|${mime}|${sortBy}|${sortOrder}|${limit}|${offset}`;
 }
 
-// Fetch with retry on 429 (respect Retry-After), abort support, and deduplication
 async function fetchWithRetry(url: string, init: RequestInit, retries = 2): Promise<Response> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     const res = await fetch(url, init);
@@ -53,40 +54,51 @@ async function fetchWithRetry(url: string, init: RequestInit, retries = 2): Prom
   throw new Error("Too many requests");
 }
 
-export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
-  // State
+export function Gallery({
+  initialFiles,
+  initialHasMore,
+  initialQuery,
+  initialMime,
+  summary,
+}: {
+  initialFiles: ClientFile[];
+  initialHasMore: boolean;
+  initialQuery: string;
+  initialMime: "all" | "image" | "video";
+  summary: DashboardSummaryData;
+}) {
   const [files, setFiles] = useState<ClientFile[]>(initialFiles);
-  const [query, setQuery] = useState("");
-  const [mime, setMime] = useState<"all" | "image" | "video">("all");
+  const [query, setQuery] = useState(initialQuery);
+  const [mime, setMime] = useState<"all" | "image" | "video">(initialMime);
   const [sortBy, setSortBy] = useState<"date" | "name" | "size">("date");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
-  const [view, setView] = useState<ViewMode>("grid");
+  const [view, setView] = useState<ViewMode>(() => {
+    if (typeof window === "undefined") return "grid";
+    const saved = (window.localStorage.getItem("tellydrive:view") || window.localStorage.getItem("tellybase:view")) as ViewMode | null;
+    return saved === "grid" || saved === "list" ? saved : "grid";
+  });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [context, setContext] = useState<{ x: number; y: number; file: ClientFile } | null>(null);
   const [loading, setLoading] = useState(false);
-  const [hasMore, setHasMore] = useState(initialFiles.length === 48);
+  const [hasMore, setHasMore] = useState(initialHasMore);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropRef = useRef<HTMLDivElement>(null);
 
-  // Request coalescing / abort
   const abortRef = useRef<AbortController | null>(null);
   const requestIdRef = useRef(0);
   const filesLenRef = useRef(files.length);
-  filesLenRef.current = files.length;
 
-  // View persistence
   useEffect(() => {
-    const saved = (localStorage.getItem("tellydrive:view") || localStorage.getItem("tellybase:view")) as ViewMode | null;
-    if (saved === "grid" || saved === "list") setView(saved);
-  }, []);
+    filesLenRef.current = files.length;
+  }, [files.length]);
+
   useEffect(() => {
     localStorage.setItem("tellydrive:view", view);
   }, [view]);
 
-  // Optimised fetch with client cache, dedup, abort, ETag and stale-while-revalidate
   const fetchFiles = useCallback(
     async (opts?: { reset?: boolean; append?: boolean; signal?: AbortSignal }) => {
       const isAppend = Boolean(opts?.append && !opts?.reset);
@@ -95,18 +107,14 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
       const q = query.trim();
       const key = cacheKeyFor(q, mime, sortBy, sortOrder, limit, offset);
 
-      // Serve from client cache if fresh (reset only)
       if (!isAppend) {
         const cached = CLIENT_CACHE.get(key);
         if (cached && Date.now() < cached.expires) {
           setFiles(cached.files);
           setHasMore(cached.files.length === limit && cached.total > cached.files.length);
-          // Still revalidate in background (stale-while-revalidate)
-          // fall through to network but don't show loading spinner
         }
       }
 
-      // Deduplicate identical in-flight request
       if (PENDING_REQUESTS.has(key)) {
         try {
           const data = await PENDING_REQUESTS.get(key)!;
@@ -116,11 +124,10 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
           setHasMore(data.files.length === limit && data.total > (isAppend ? offset + data.files.length : data.files.length));
           return;
         } catch {
-          // fall through
+          // continue to refetch
         }
       }
 
-      // Abort previous
       if (abortRef.current) abortRef.current.abort();
       const controller = new AbortController();
       abortRef.current = controller;
@@ -136,11 +143,8 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
           mime,
           sortBy,
           sortOrder,
-          // The gallery is photos & videos only
           media: "1",
         });
-
-        // ETag: send If-None-Match if we have etag for this key
         const headers: Record<string, string> = {};
         const prevCache = CLIENT_CACHE.get(key);
         if (prevCache?.etag) headers["If-None-Match"] = prevCache.etag;
@@ -148,7 +152,6 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
         const fetchPromise = (async () => {
           const res = await fetchWithRetry(`/api/files?${params.toString()}`, { cache: "no-store", signal, headers });
           if (res.status === 304 && prevCache) {
-            // Not modified: extend TTL
             prevCache.expires = Date.now() + CACHE_TTL_MS;
             return { files: prevCache.files, total: prevCache.total, etag: prevCache.etag };
           }
@@ -156,7 +159,6 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
           const data = (await res.json()) as { files: ClientFile[]; total: number };
           const etag = res.headers.get("ETag") || undefined;
           CLIENT_CACHE.set(key, { files: data.files, total: data.total, etag, expires: Date.now() + CACHE_TTL_MS });
-          // LRU cap 100 keys
           if (CLIENT_CACHE.size > 100) {
             const first = CLIENT_CACHE.keys().next().value as string;
             CLIENT_CACHE.delete(first);
@@ -166,17 +168,14 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
 
         PENDING_REQUESTS.set(key, fetchPromise);
         const data = await fetchPromise;
-
-        // Ignore if a newer request started
-        if (reqId !== requestIdRef.current) return;
-        if (signal.aborted) return;
+        if (reqId !== requestIdRef.current || signal.aborted) return;
 
         if (isAppend) setFiles((prev) => [...prev, ...data.files]);
         else setFiles(data.files);
         setHasMore(data.files.length === limit && data.total > (isAppend ? offset + data.files.length : data.files.length));
-      } catch (e: unknown) {
-        if ((e as Error)?.name === "AbortError") return;
-        console.error(e);
+      } catch (error: unknown) {
+        if ((error as Error)?.name === "AbortError") return;
+        console.error(error);
       } finally {
         PENDING_REQUESTS.delete(key);
         if (reqId === requestIdRef.current) setLoading(false);
@@ -185,7 +184,6 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
     [query, mime, sortBy, sortOrder]
   );
 
-  // Debounced fetch when filters change
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -197,14 +195,12 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
     };
   }, [query, mime, sortBy, sortOrder, fetchFiles]);
 
-  // Cleanup abort on unmount
   useEffect(() => {
     return () => abortRef.current?.abort();
   }, []);
 
   const visible = useMemo(() => files, [files]);
 
-  // Selection
   const toggleSelect = (id: string, multi?: boolean) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -218,16 +214,15 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
   };
   const clearSelection = () => setSelected(new Set());
 
-  const selectedFiles = useMemo(() => visible.filter((f) => selected.has(f.id)), [visible, selected]);
+  const selectedFiles = useMemo(() => visible.filter((file) => selected.has(file.id)), [visible, selected]);
+  const viewerFiles = useMemo(() => visible.filter((file) => file.mimeType.startsWith("image/") || file.mimeType.startsWith("video/")), [visible]);
 
-  const viewerFiles = useMemo(() => visible.filter((f) => f.mimeType.startsWith("image/") || f.mimeType.startsWith("video/")), [visible]);
   const openViewer = useCallback((file: ClientFile) => {
-    const idx = viewerFiles.findIndex((f) => f.id === file.id);
+    const idx = viewerFiles.findIndex((entry) => entry.id === file.id);
     if (idx !== -1) setViewerIndex(idx);
   }, [viewerFiles]);
   const closeViewer = useCallback(() => setViewerIndex(null), []);
 
-  // Upload: chunked with retry and progress throttling
   const uploadInParts = useCallback(async (item: QueueItem) => {
     const file = item.file;
     const count = Math.ceil(file.size / PART_UPLOAD_SIZE);
@@ -247,7 +242,6 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
       fd.append("mimeType", file.type || "application/octet-stream");
       fd.append("uploadId", uploadId);
 
-      // Retry with backoff for 429/5xx
       let attempt = 0;
       let res: Response | null = null;
       let data: { token?: string; error?: string } = {};
@@ -257,59 +251,59 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
         if (res.ok && data.token) break;
         if (res.status === 429 || res.status >= 500) {
           const ra = Number(res.headers.get("Retry-After") || "1");
-          await new Promise((r) => setTimeout(r, Math.min(4000, (isFinite(ra) ? ra * 1000 : 600 * Math.pow(2, attempt)) + Math.random() * 200)));
+          await new Promise((resolve) => setTimeout(resolve, Math.min(4000, (isFinite(ra) ? ra * 1000 : 600 * Math.pow(2, attempt)) + Math.random() * 200)));
           attempt++;
           continue;
         }
         break;
       }
-      if (!res?.ok || !data.token) {
-        throw new Error(data.error || `Upload failed (part ${i + 1} of ${count})`);
-      }
+      if (!res?.ok || !data.token) throw new Error(data.error || `Upload failed (part ${i + 1} of ${count})`);
       tokens.push(data.token);
       const pct = Math.round(((i + 1) / count) * 95);
-      // Throttle progress updates to at most every 120ms
       const now = Date.now();
       if (now - lastProgressEmit > 120 || i === count - 1) {
         lastProgressEmit = now;
-        setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, progress: pct } : x)));
+        setQueue((current) => current.map((entry) => (entry.id === item.id ? { ...entry, progress: pct } : entry)));
       }
     }
 
-    const fin = await fetchWithRetry("/api/files/finalize", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: file.name,
-        size: file.size,
-        mimeType: file.type || "application/octet-stream",
-        uploadId,
-        parts: tokens,
-        source: "gallery",
-      }),
-    }, 2);
+    const fin = await fetchWithRetry(
+      "/api/files/finalize",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: file.name,
+          size: file.size,
+          mimeType: file.type || "application/octet-stream",
+          uploadId,
+          parts: tokens,
+          source: "gallery",
+        }),
+      },
+      2
+    );
     const finData = (await fin.json().catch(() => ({}))) as { id?: string; error?: string };
     if (!fin.ok || !finData.id) throw new Error(finData.error || "Upload failed");
   }, []);
 
-  // Upload handling (batched sequential to avoid Telegram flood)
   const uploadFiles = useCallback(
     async (list: FileList | File[]) => {
-      const arr = Array.from(list);
-      if (!arr.length) return;
+      const incoming = Array.from(list);
+      if (!incoming.length) return;
 
-      const items: QueueItem[] = arr.map((f) => ({
+      const items: QueueItem[] = incoming.map((file) => ({
         id: Math.random().toString(36).slice(2),
-        name: f.name,
-        size: f.size,
+        name: file.name,
+        size: file.size,
         progress: 0,
         status: "queued" as const,
-        file: f,
+        file,
       }));
-      setQueue((q) => [...q, ...items]);
+      setQueue((current) => [...current, ...items]);
 
       for (const item of items) {
-        setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, status: "uploading" as const } : x)));
+        setQueue((current) => current.map((entry) => (entry.id === item.id ? { ...entry, status: "uploading" as const } : entry)));
         try {
           if (item.file.size > PART_UPLOAD_SIZE) {
             await uploadInParts(item);
@@ -324,39 +318,37 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
             if (result && !result.ok) throw new Error(result.error || "Upload failed");
           }
 
-          setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, progress: 100, status: "done" as const } : x)));
-          // Invalidate client cache for this query and refetch
+          setQueue((current) => current.map((entry) => (entry.id === item.id ? { ...entry, progress: 100, status: "done" as const } : entry)));
           CLIENT_CACHE.clear();
           PENDING_REQUESTS.clear();
           await fetchFiles({ reset: true });
-        } catch (e: unknown) {
-          const msg = e instanceof Error ? e.message : String(e);
-          setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, status: "error" as const, error: msg } : x)));
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error);
+          setQueue((current) => current.map((entry) => (entry.id === item.id ? { ...entry, status: "error" as const, error: message } : entry)));
         }
       }
 
       setTimeout(() => {
-        setQueue((q) => q.filter((x) => x.status === "uploading" || x.status === "queued"));
+        setQueue((current) => current.filter((entry) => entry.status === "uploading" || entry.status === "queued"));
       }, 3000);
     },
     [fetchFiles, uploadInParts]
   );
 
-  // Drag & drop
   useEffect(() => {
     const el = dropRef.current;
     if (!el) return;
-    const onDragOver = (e: DragEvent) => {
-      e.preventDefault();
+    const onDragOver = (event: DragEvent) => {
+      event.preventDefault();
       setDragOver(true);
     };
-    const onDragLeave = (e: DragEvent) => {
-      if (e.target === el) setDragOver(false);
+    const onDragLeave = (event: DragEvent) => {
+      if (event.target === el) setDragOver(false);
     };
-    const onDrop = (e: DragEvent) => {
-      e.preventDefault();
+    const onDrop = (event: DragEvent) => {
+      event.preventDefault();
       setDragOver(false);
-      if (e.dataTransfer?.files.length) uploadFiles(e.dataTransfer.files);
+      if (event.dataTransfer?.files.length) uploadFiles(event.dataTransfer.files);
     };
     el.addEventListener("dragover", onDragOver);
     el.addEventListener("dragleave", onDragLeave);
@@ -368,40 +360,35 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
     };
   }, [uploadFiles]);
 
-  // Handle paste
   useEffect(() => {
-    const onPaste = (e: ClipboardEvent) => {
-      const files = e.clipboardData?.files;
-      if (files?.length) {
-        const imgs = Array.from(files).filter((f) => f.type.startsWith("image/") || f.type.startsWith("video/"));
-        if (imgs.length) uploadFiles(imgs);
+    const onPaste = (event: ClipboardEvent) => {
+      const pastedFiles = event.clipboardData?.files;
+      if (pastedFiles?.length) {
+        const accepted = Array.from(pastedFiles).filter((file) => file.type.startsWith("image/") || file.type.startsWith("video/"));
+        if (accepted.length) uploadFiles(accepted);
       }
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
   }, [uploadFiles]);
 
-  // Actions — batched delete with concurrency, optimistic UI
   const handleDelete = async (ids: string[]) => {
     if (!ids.length) return;
     if (!confirm(`Delete ${ids.length} ${ids.length === 1 ? "file" : "files"}?`)) return;
-    // Optimistic: remove immediately, restore on error
-    const prev = files;
-    setFiles((p) => p.filter((f) => !ids.includes(f.id)));
+    const previous = files;
+    setFiles((current) => current.filter((file) => !ids.includes(file.id)));
     clearSelection();
-    // Concurrency 4
     const concurrency = 4;
     const errors: string[] = [];
     for (let i = 0; i < ids.length; i += concurrency) {
       const batch = ids.slice(i, i + concurrency);
-      const results = await Promise.allSettled(batch.map((id) => fetchWithRetry(`/api/files/${id}`, { method: "DELETE" }, 2)));
-      results.forEach((r, idx) => {
-        if (r.status === "rejected" || (r.status === "fulfilled" && !r.value.ok)) errors.push(batch[idx]);
+      const outcomes = await Promise.allSettled(batch.map((id) => fetchWithRetry(`/api/files/${id}`, { method: "DELETE" }, 2)));
+      outcomes.forEach((result, index) => {
+        if (result.status === "rejected" || (result.status === "fulfilled" && !result.value.ok)) errors.push(batch[index]);
       });
     }
     if (errors.length) {
-      // Restore failed ones by refetch
-      setFiles(prev);
+      setFiles(previous);
       alert(`Failed to delete ${errors.length} file(s)`);
       CLIENT_CACHE.clear();
       await fetchFiles({ reset: true });
@@ -414,7 +401,7 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
     try {
       const res = await fetchWithRetry(`/api/files/${file.id}?download=1&proxy=1`, {}, 1);
       if (!res.ok) {
-        const data = (await fetch(`/api/files/${file.id}`).then((r) => r.json())) as { url?: string; urls?: string[] };
+        const data = (await fetch(`/api/files/${file.id}`).then((response) => response.json())) as { url?: string; urls?: string[] };
         if (data.url) window.open(data.url, "_blank");
         else if (data.urls) window.open(data.urls[0], "_blank");
         return;
@@ -428,20 +415,18 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 30_000);
-    } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : "Download failed");
+    } catch (error: unknown) {
+      alert(error instanceof Error ? error.message : "Download failed");
     }
   }, []);
 
   const handleBulkDownload = async () => {
-    // Sequential to avoid browser blocking, but with small gap
-    for (const f of selectedFiles) {
-      await handleDownload(f);
-      await new Promise((r) => setTimeout(r, 250));
+    for (const file of selectedFiles) {
+      await handleDownload(file);
+      await new Promise((resolve) => setTimeout(resolve, 250));
     }
   };
 
-  // Infinite scroll — prefetch early with rootMargin 800px
   const observerRef = useRef<IntersectionObserver | null>(null);
   const sentinelRef = useCallback(
     (node: HTMLDivElement | null) => {
@@ -461,36 +446,16 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
   );
 
   return (
-    <div ref={dropRef} className="gallery-root">
-      <div className="gallery-topbar">
-        <div className="gallery-topbar-left">
-          <div className="gallery-page-title">
-            <h1>Photos</h1>
-            <span>Photos &amp; videos, all in one place</span>
-          </div>
+    <div ref={dropRef} className="tb-gallery-page">
+      <section className="tb-page-intro compact">
+        <div>
+          <span className="tb-eyebrow">Gallery</span>
+          <h1>All your visuals, organized by date.</h1>
+          <p>Browse photos and videos with quick previews, instant filtering, and lightweight upload controls.</p>
         </div>
-        <div className="gallery-topbar-right">
-          <button className="btn-upload" onClick={() => fileInputRef.current?.click()} aria-label="Upload">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="17 8 12 3 7 8" />
-              <line x1="12" y1="3" x2="12" y2="15" />
-            </svg>
-            Upload
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept="image/*,video/*"
-            style={{ display: "none" }}
-            onChange={(e) => {
-              if (e.target.files) uploadFiles(e.target.files);
-              e.target.value = "";
-            }}
-          />
-        </div>
-      </div>
+      </section>
+
+      <DashboardSummaryStrip summary={summary} />
 
       <GalleryToolbar
         query={query}
@@ -504,6 +469,19 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
         view={view}
         onView={setView}
         count={visible.length}
+        onUpload={() => fileInputRef.current?.click()}
+      />
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept="image/*,video/*"
+        style={{ display: "none" }}
+        onChange={(event) => {
+          if (event.target.files) uploadFiles(event.target.files);
+          event.target.value = "";
+        }}
       />
 
       <AnimatePresence>
@@ -512,7 +490,7 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
         )}
       </AnimatePresence>
 
-      <div className="gallery-main">
+      <section className="tb-content-surface gallery">
         {visible.length === 0 && !loading ? (
           <EmptyState onUpload={() => fileInputRef.current?.click()} />
         ) : view === "grid" ? (
@@ -520,12 +498,12 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
             files={visible}
             selected={selected}
             onSelect={toggleSelect}
-            onContext={(e, f) => {
-              e.preventDefault();
-              setContext({ x: e.clientX, y: e.clientY, file: f });
+            onContext={(event, file) => {
+              event.preventDefault();
+              setContext({ x: event.clientX, y: event.clientY, file });
             }}
             onDownload={handleDownload}
-            onDelete={(f) => handleDelete([f.id])}
+            onDelete={(file) => handleDelete([file.id])}
             onOpen={openViewer}
           />
         ) : (
@@ -533,31 +511,30 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
             files={visible}
             selected={selected}
             onSelect={toggleSelect}
-            onContext={(e, f) => {
-              e.preventDefault();
-              setContext({ x: e.clientX, y: e.clientY, file: f });
+            onContext={(event, file) => {
+              event.preventDefault();
+              setContext({ x: event.clientX, y: event.clientY, file });
             }}
             onDownload={handleDownload}
-            onDelete={(f) => handleDelete([f.id])}
+            onDelete={(file) => handleDelete([file.id])}
             onOpen={openViewer}
           />
         )}
+
+        {loading && visible.length === 0 ? <GallerySkeleton /> : null}
         <div ref={sentinelRef} style={{ height: 1 }} />
-        {loading && (
-          <div className="gallery-loading">
-            <span className="spinner" /> Loading…
+        {loading && visible.length > 0 ? (
+          <div className="gallery-loading tb-loading-inline">
+            <span className="spinner" /> Loading more media…
           </div>
-        )}
-      </div>
+        ) : null}
+      </section>
 
       <DragDropOverlay visible={dragOver} />
       <UploadQueue items={queue} onDismiss={() => setQueue([])} />
 
-      <motion.button className="fab-upload" whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.98 }} onClick={() => fileInputRef.current?.click()} aria-label="Upload files">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
-          <path d="M12 19V5" />
-          <path d="M5 12l7-7 7 7" />
-        </svg>
+      <motion.button className="fab-upload tb-mobile-upload" whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.98 }} onClick={() => fileInputRef.current?.click()} aria-label="Upload files">
+        <Upload size={22} strokeWidth={2.4} />
       </motion.button>
 
       {context && (
@@ -582,10 +559,20 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
       )}
 
       <AnimatePresence>
-        {viewerIndex !== null && viewerFiles[viewerIndex] && (
-          <GalleryViewer files={viewerFiles} index={viewerIndex} onClose={closeViewer} onChange={setViewerIndex} onDownload={handleDownload} />
-        )}
+        {viewerIndex !== null && viewerFiles[viewerIndex] ? (
+          <GalleryViewer key={viewerFiles[viewerIndex].id} files={viewerFiles} index={viewerIndex} onClose={closeViewer} onChange={setViewerIndex} onDownload={handleDownload} />
+        ) : null}
       </AnimatePresence>
+    </div>
+  );
+}
+
+function GallerySkeleton() {
+  return (
+    <div className="tb-gallery-skeleton-grid" aria-hidden="true">
+      {Array.from({ length: 8 }).map((_, index) => (
+        <div key={index} className="tb-gallery-skeleton-card" />
+      ))}
     </div>
   );
 }

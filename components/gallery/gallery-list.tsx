@@ -1,5 +1,6 @@
 "use client";
 
+import { Download, FileImage, Play, Trash2 } from "lucide-react";
 import type { ClientFile } from "./index";
 
 function formatSize(bytes: number) {
@@ -27,85 +28,67 @@ export function GalleryList({
   onOpen?: (f: ClientFile) => void;
 }) {
   return (
-    <div className="list-wrap" role="table" aria-label="Files">
-      <div className="list-head" role="row">
-        <span role="columnheader" style={{ width: 36 }} />
+    <div className="tb-list-surface" role="table" aria-label="Gallery list">
+      <div className="tb-list-head" role="row">
+        <span role="columnheader" className="checkbox" />
         <span role="columnheader">Name</span>
-        <span role="columnheader">Size</span>
         <span role="columnheader">Type</span>
-        <span role="columnheader">Modified</span>
-        <span role="columnheader" style={{ width: 80 }} />
+        <span role="columnheader">Size</span>
+        <span role="columnheader">Date</span>
+        <span role="columnheader" className="actions" />
       </div>
+
       {files.map((file) => {
-        const isSel = selected.has(file.id);
-        const canPreview = file.mimeType.startsWith("image/") || file.mimeType.startsWith("video/");
+        const isSelected = selected.has(file.id);
+        const isVideo = file.mimeType.startsWith("video/");
+        const canPreview = file.mimeType.startsWith("image/") || isVideo;
+
         return (
           <div
             key={file.id}
             role="row"
-            className={`list-row ${isSel ? "selected" : ""} ${canPreview ? "previewable" : ""}`}
-            onClick={(e) => {
-              if (e.metaKey || e.ctrlKey || e.shiftKey) onSelect(file.id, true);
+            className={`tb-list-row ${isSelected ? "selected" : ""}`}
+            onClick={(event) => {
+              if (event.metaKey || event.ctrlKey || event.shiftKey) onSelect(file.id, true);
               else if (canPreview && onOpen) onOpen(file);
               else onSelect(file.id);
             }}
-            onContextMenu={(e) => onContext(e, file)}
+            onContextMenu={(event) => onContext(event, file)}
             onDoubleClick={() => {
               if (canPreview && onOpen) onOpen(file);
               else onDownload(file);
             }}
           >
-            <span role="cell">
+            <span role="cell" className="checkbox">
               <button
-                className={`check small ${isSel ? "checked" : ""}`}
-                onClick={(e) => {
-                  e.stopPropagation();
+                className={`tb-select-dot inline ${isSelected ? "checked" : ""}`}
+                onClick={(event) => {
+                  event.stopPropagation();
                   onSelect(file.id, true);
                 }}
-                aria-label={isSel ? "Deselect" : "Select"}
+                aria-label={isSelected ? "Deselect item" : "Select item"}
               >
-                {isSel ? "✓" : ""}
+                {isSelected ? "✓" : ""}
               </button>
             </span>
-            <span role="cell" className="list-name">
-              <span className="file-icon">
-                {file.mimeType.startsWith("video/") ? (
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
-                    <polygon points="5 3 19 12 5 21 5 3" />
-                  </svg>
-                ) : (
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
-                    <rect x="3" y="3" width="18" height="18" rx="2" />
-                    <circle cx="8.5" cy="8.5" r="1.5" />
-                    <path d="M21 15l-5-5L5 21" />
-                  </svg>
-                )}
+            <span role="cell" className="tb-list-name-cell">
+              <span className={`tb-result-icon ${isVideo ? "video" : "media"}`}>
+                {isVideo ? <Play size={14} fill="currentColor" /> : <FileImage size={14} />}
               </span>
-              <span title={file.name}>{file.name}</span>
-              {file.chunked && <span className="mini-badge">chunked</span>}
+              <span className="tb-list-name-copy">
+                <strong>{file.name}</strong>
+                {file.chunked ? <em>Chunked upload</em> : null}
+              </span>
             </span>
-            <span role="cell" className="muted">
-              {formatSize(file.size)}
-            </span>
-            <span role="cell" className="muted">
-              {file.mimeType.split("/")[1]?.toUpperCase() || "FILE"}
-            </span>
-            <span role="cell" className="muted">
-              {new Date(file.createdAt).toLocaleDateString()}
-            </span>
-            <span role="cell" className="row-actions">
-              <button onClick={(e) => { e.stopPropagation(); onDownload(file); }} aria-label="Download">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
+            <span role="cell" className="tb-list-muted">{isVideo ? "Video" : "Photo"}</span>
+            <span role="cell" className="tb-list-muted">{formatSize(file.size)}</span>
+            <span role="cell" className="tb-list-muted">{new Date(file.createdAt).toLocaleDateString()}</span>
+            <span role="cell" className="tb-row-actions actions">
+              <button onClick={(event) => { event.stopPropagation(); onDownload(file); }} aria-label="Download">
+                <Download size={14} />
               </button>
-              <button onClick={(e) => { e.stopPropagation(); onDelete(file); }} aria-label="Delete">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polyline points="3 6 5 6 21 6" />
-                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                </svg>
+              <button onClick={(event) => { event.stopPropagation(); onDelete(file); }} aria-label="Delete">
+                <Trash2 size={14} />
               </button>
             </span>
           </div>

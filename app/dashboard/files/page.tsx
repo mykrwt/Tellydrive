@@ -1,13 +1,20 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
-import { findUserById, getFilesForUser, getFoldersForUser } from "@/lib/telegram-store";
+import { findUserById, getFilesForUser, getFolderById, getFolderPath, getFoldersForUser } from "@/lib/telegram-store";
 import { isAdminUser } from "@/lib/admin";
-import { DashboardNav } from "@/components/dashboard-nav";
 import { FileManager } from "@/components/file-manager";
+import { DashboardChrome } from "@/components/dashboard-chrome";
+import { getDashboardSummary } from "@/lib/dashboard-summary";
 
 export const metadata = { title: "Files" };
 
-export default async function FilesPage() {
+const FOLDER_ID_RE = /^[a-zA-Z0-9_-]{6,64}$/;
+
+export default async function FilesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ search?: string; folder?: string }>;
+}) {
   let safeUser;
   try {
     safeUser = await getCurrentUser();
@@ -16,50 +23,65 @@ export default async function FilesPage() {
   }
   if (!safeUser) redirect("/sign-in");
 
+  const params = await searchParams;
+  const search = typeof params.search === "string" ? params.search.trim().slice(0, 120) : "";
+  const requestedFolderId = typeof params.folder === "string" && FOLDER_ID_RE.test(params.folder) ? params.folder : null;
+
   const user = await findUserById(safeUser.id);
   if (!user) redirect("/sign-in");
 
-  // Root folder listing (server-rendered so the first paint has content).
-  // Also load all folders/files (cheap: the store is cached in-process) so
-  // folder item counts are correct on first paint, matching the API payloads.
-  const [folders, files, allFolders, allFiles] = await Promise.all([
-    getFoldersForUser(user.id, null),
-    getFilesForUser(user.id, { folderId: null, section: "files", sortBy: "name", sortOrder: "asc", limit: 500 }),
+  const activeFolder = requestedFolderId ? await getFolderById(user.id, requestedFolderId) : null;
+  const folderId = activeFolder?.id ?? null;
+
+  const [folders, files, allFolders, allFiles, path, summary] = await Promise.all([
+    getFoldersForUser(user.id, folderId),
+    getFilesForUser(user.id, { folderId, section: "files", sortBy: "name", sortOrder: "asc", limit: 500 }),
     getFoldersForUser(user.id),
     getFilesForUser(user.id, { section: "files" }),
+    folderId ? getFolderPath(user.id, folderId) : Promise.resolve([]),
+    getDashboardSummary(user.id),
   ]);
 
   const itemCounts = new Map<string, number>();
-  for (const f of allFiles) {
-    if (f.folderId) itemCounts.set(f.folderId, (itemCounts.get(f.folderId) ?? 0) + 1);
+  for (const file of allFiles) {
+    if (file.folderId) itemCounts.set(file.folderId, (itemCounts.get(file.folderId) ?? 0) + 1);
   }
-  for (const f of allFolders) {
-    if (f.parentId) itemCounts.set(f.parentId, (itemCounts.get(f.parentId) ?? 0) + 1);
+  for (const folder of allFolders) {
+    if (folder.parentId) itemCounts.set(folder.parentId, (itemCounts.get(folder.parentId) ?? 0) + 1);
   }
 
   const safeFolders = folders
     .sort((a, b) => a.name.localeCompare(b.name))
-    .map((f) => ({ id: f.id, name: f.name, parentId: f.parentId, createdAt: f.createdAt, itemCount: itemCounts.get(f.id) ?? 0 }));
+    .map((folder) => ({
+      id: folder.id,
+      name: folder.name,
+      parentId: folder.parentId,
+      createdAt: folder.createdAt,
+      itemCount: itemCounts.get(folder.id) ?? 0,
+    }));
 
-  const safeFiles = files.map((f) => ({
-    id: f.id,
-    name: f.name,
-    size: f.size,
-    mimeType: f.mimeType,
-    createdAt: f.createdAt,
-    updatedAt: f.updatedAt,
-    chunked: f.chunked,
-    chunkCount: f.chunkCount,
-    folderId: f.folderId,
-    hasThumbnail: Boolean(f.thumbnailFileId),
+  const safeFiles = files.map((file) => ({
+    id: file.id,
+    name: file.name,
+    size: file.size,
+    mimeType: file.mimeType,
+    createdAt: file.createdAt,
+    updatedAt: file.updatedAt,
+    chunked: file.chunked,
+    chunkCount: file.chunkCount,
+    folderId: file.folderId,
+    hasThumbnail: Boolean(file.thumbnailFileId),
   }));
 
   return (
-    <main className="dashboard-page gallery-page">
-      <DashboardNav userName={user.name} isAdmin={isAdminUser(user)} />
-      <section className="gallery-shell">
-        <FileManager initialFolders={safeFolders} initialFiles={safeFiles} initialPath={[]} />
-      </section>
-    </main>
+    <DashboardChrome user={{ name: user.name, email: user.email, isAdmin: isAdminUser(user) }} summary={summary}>
+      <FileManager
+        initialFolders={safeFolders}
+        initialFiles={safeFiles}
+        initialPath={path}
+        initialSearch={search}
+        summary={summary}
+      />
+    </DashboardChrome>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { motion } from "framer-motion";
+import { Download, Play, Trash2 } from "lucide-react";
 import type { ClientFile } from "./index";
 
 function isVideo(mime: string) {
@@ -12,7 +13,6 @@ function startOfDay(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 }
 
-// Google Photos-style day headers: Today / Yesterday / weekday / month day / full date
 export function dayLabel(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "Unknown date";
@@ -32,6 +32,13 @@ export function dayLabel(iso: string): string {
 
 type Group = { key: string; label: string; files: ClientFile[] };
 
+function masonrySpan(file: ClientFile) {
+  const ratio = file.width && file.height ? file.height / file.width : 1;
+  if (ratio >= 1.45) return 26;
+  if (ratio <= 0.75) return 14;
+  return 19;
+}
+
 export function GalleryGrid({
   files,
   selected,
@@ -49,7 +56,6 @@ export function GalleryGrid({
   onDelete: (f: ClientFile) => void;
   onOpen?: (f: ClientFile) => void;
 }) {
-  // Group by calendar day, preserving the sort order of the incoming list
   const groups = useMemo<Group[]>(() => {
     const map = new Map<string, Group>();
     for (const file of files) {
@@ -65,35 +71,34 @@ export function GalleryGrid({
   }, [files]);
 
   return (
-    <div className="grid-wrap gp-grid">
+    <div className="tb-gallery-groups">
       {groups.map((group) => (
-        <section key={group.key} className="gp-day-group" aria-label={group.label}>
-          <div className="gp-day-head">
+        <section key={group.key} className="tb-gallery-group" aria-label={group.label}>
+          <div className="tb-gallery-group-head">
             <h3>{group.label}</h3>
-            <span>
-              {group.files.length} {group.files.length === 1 ? "item" : "items"}
-            </span>
+            <span>{group.files.length} {group.files.length === 1 ? "item" : "items"}</span>
           </div>
-          <div className="gp-day-grid">
-            {group.files.map((file, idx) => {
+
+          <div className="tb-masonry-grid">
+            {group.files.map((file, index) => {
               const isSel = selected.has(file.id);
               const video = isVideo(file.mimeType);
               const isImage = file.mimeType.startsWith("image/");
               const thumbUrl = isImage || video ? `/api/files/${file.id}?thumbnail=1` : null;
-
               const canPreview = isImage || video;
+              const span = masonrySpan(file);
 
               return (
-                <motion.div
+                <motion.article
                   key={file.id}
                   layout
-                  initial={{ opacity: 0, y: 6 }}
+                  initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: Math.min(idx * 0.01, 0.24), duration: 0.26, ease: [0.2, 0.7, 0.2, 1] }}
-                  className={`file-card gp-card ${isSel ? "selected" : ""} ${canPreview ? "previewable" : ""}`}
-                  onClick={(e) => {
-                    // Single click opens viewer (Google Photos behavior); modifiers select
-                    if (e.metaKey || e.ctrlKey || e.shiftKey) {
+                  transition={{ delay: Math.min(index * 0.015, 0.22), duration: 0.28, ease: [0.2, 0.7, 0.2, 1] }}
+                  className={`tb-media-card ${isSel ? "selected" : ""}`}
+                  style={{ gridRow: `span ${span}` }}
+                  onClick={(event) => {
+                    if (event.metaKey || event.ctrlKey || event.shiftKey) {
                       onSelect(file.id, true);
                       return;
                     }
@@ -103,101 +108,70 @@ export function GalleryGrid({
                     }
                     onSelect(file.id);
                   }}
-                  onContextMenu={(e) => onContext(e, file)}
+                  onContextMenu={(event) => onContext(event, file)}
                   onDoubleClick={() => onDownload(file)}
                   role="button"
                   tabIndex={0}
-                  aria-label={`${file.name}`}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && canPreview && onOpen) onOpen(file);
+                  aria-label={file.name}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && canPreview && onOpen) onOpen(file);
                   }}
                 >
-                  <div className="card-media gp-media">
-                    {/* Selection check — Google Photos style: circle top-left, visible on hover/selection */}
-                    <button
-                      className={`check gp-check ${isSel ? "checked" : ""}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSelect(file.id, true);
-                      }}
-                      aria-label={isSel ? "Deselect" : "Select"}
-                    >
-                      {isSel ? "✓" : ""}
-                    </button>
+                  <button
+                    type="button"
+                    className={`tb-select-dot ${isSel ? "checked" : ""}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onSelect(file.id, true);
+                    }}
+                    aria-label={isSel ? "Deselect item" : "Select item"}
+                  >
+                    {isSel ? "✓" : ""}
+                  </button>
 
-                    {/* Media */}
-                    {thumbUrl && isImage ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={thumbUrl} alt={file.name} loading="lazy" decoding="async" />
-                    ) : video ? (
-                      <>
-                        {thumbUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={thumbUrl} alt={file.name} loading="lazy" decoding="async" className="video-thumb" />
-                        ) : null}
-                        <div className="gp-video-overlay" aria-hidden>
-                          <span className="gp-play">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="white" stroke="none"><polygon points="5 3 19 12 5 21 5 3" /></svg>
-                          </span>
-                        </div>
-                        <span className="gp-video-badge">
-                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="5 3 19 12 5 21 5 3" /></svg>
-                          VIDEO
-                        </span>
-                        {file.duration ? (
-                          <span className="gp-duration">
-                            {Math.floor(file.duration / 60)}:{String(Math.floor(file.duration % 60)).padStart(2, "0")}
-                          </span>
-                        ) : null}
-                      </>
-                    ) : (
-                      <div className="media-placeholder image gp-fallback">
-                        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5">
-                          <rect x="3" y="3" width="18" height="18" rx="2" />
-                          <circle cx="8.5" cy="8.5" r="1.5" />
-                          <path d="M21 15l-5-5L5 21" />
-                        </svg>
-                      </div>
-                    )}
-
-                    {/* Gradient scrim + filename like Google Photos */}
-                    <div className="gp-scrim" />
-                    <div className="gp-caption">
-                      <span className="gp-name" title={file.name}>{file.name}</span>
+                  {thumbUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={thumbUrl} alt={file.name} loading="lazy" decoding="async" className="tb-media-image" />
+                  ) : (
+                    <div className="tb-media-fallback">
+                      <span>{file.name.slice(0, 1).toUpperCase()}</span>
                     </div>
+                  )}
 
-                    {/* Hover actions — subtle, Google Photos style */}
-                    <div className="card-hover-actions gp-actions">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDownload(file);
-                        }}
-                        aria-label="Download"
-                        title="Download"
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                          <polyline points="7 10 12 15 17 10" />
-                          <line x1="12" y1="15" x2="12" y2="3" />
-                        </svg>
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDelete(file);
-                        }}
-                        aria-label="Delete"
-                        title="Delete"
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <polyline points="3 6 5 6 21 6" />
-                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                        </svg>
-                      </button>
+                  <div className="tb-media-overlay" />
+                  <div className="tb-media-meta">
+                    <div>
+                      <strong title={file.name}>{file.name}</strong>
+                      <span>{new Date(file.createdAt).toLocaleDateString()}</span>
                     </div>
+                    {video ? (
+                      <span className="tb-media-kind-pill"><Play size={12} fill="currentColor" /> Video</span>
+                    ) : null}
                   </div>
-                </motion.div>
+
+                  <div className="tb-media-actions">
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onDownload(file);
+                      }}
+                      aria-label="Download"
+                    >
+                      <Download size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onDelete(file);
+                      }}
+                      aria-label="Delete"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </motion.article>
               );
             })}
           </div>

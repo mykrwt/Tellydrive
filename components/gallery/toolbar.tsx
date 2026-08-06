@@ -1,5 +1,7 @@
 "use client";
 
+import { ArrowUpDown, Grid2x2, List, Search, SlidersHorizontal, Upload } from "lucide-react";
+
 type Props = {
   query: string;
   onQuery: (v: string) => void;
@@ -12,6 +14,7 @@ type Props = {
   view: "grid" | "list";
   onView: (v: "grid" | "list") => void;
   count: number;
+  onUpload: () => void;
 };
 
 export function GalleryToolbar({
@@ -26,52 +29,57 @@ export function GalleryToolbar({
   view,
   onView,
   count,
+  onUpload,
 }: Props) {
-
   return (
-    <div className="gallery-toolbar">
-      <div className="toolbar-left">
-        <div className="search-wrap">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="11" cy="11" r="8" />
-            <path d="M21 21l-4.35-4.35" />
-          </svg>
+    <div className="tb-toolbar gallery sticky">
+      <div className="tb-toolbar-main">
+        <div className="tb-search-field">
+          <Search size={16} strokeWidth={2} />
           <input
-            placeholder="Search photos & videos…"
+            placeholder="Search photos and videos"
             value={query}
-            onChange={(e) => onQuery(e.target.value)}
-            aria-label="Search"
+            onChange={(event) => onQuery(event.target.value)}
+            aria-label="Search gallery"
           />
-          {query && (
-            <button className="clear-search" onClick={() => onQuery("")} aria-label="Clear search">
+          {query ? (
+            <button className="tb-clear-button" onClick={() => onQuery("")} aria-label="Clear search">
               ×
             </button>
-          )}
+          ) : null}
         </div>
 
-        <div className="filter-pills">
-          <button className={mime === "all" ? "active" : ""} onClick={() => onMime("all")}>
-            All
-          </button>
-          <button className={mime === "image" ? "active" : ""} onClick={() => onMime("image")}>
-            Photos
-          </button>
-          <button className={mime === "video" ? "active" : ""} onClick={() => onMime("video")}>
-            Videos
-          </button>
+        <div className="tb-segmented-filter" role="tablist" aria-label="Gallery filter">
+          {[
+            { key: "all", label: "All" },
+            { key: "image", label: "Photos" },
+            { key: "video", label: "Videos" },
+          ].map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              role="tab"
+              aria-selected={mime === item.key}
+              className={mime === item.key ? "active" : ""}
+              onClick={() => onMime(item.key as typeof mime)}
+            >
+              {item.label}
+            </button>
+          ))}
         </div>
       </div>
 
-      <div className="toolbar-right">
-        <div className="sort-control">
+      <div className="tb-toolbar-actions">
+        <span className="tb-inline-pill subtle"><SlidersHorizontal size={14} /> {count} items</span>
+        <label className="tb-select-wrap" aria-label="Sort gallery">
+          <ArrowUpDown size={14} />
           <select
             value={`${sortBy}-${sortOrder}`}
-            onChange={(e) => {
-              const [by, order] = e.target.value.split("-") as [typeof sortBy, typeof sortOrder];
+            onChange={(event) => {
+              const [by, order] = event.target.value.split("-") as [typeof sortBy, typeof sortOrder];
               onSortBy(by);
               onSortOrder(order);
             }}
-            aria-label="Sort"
           >
             <option value="date-desc">Newest first</option>
             <option value="date-asc">Oldest first</option>
@@ -80,42 +88,33 @@ export function GalleryToolbar({
             <option value="size-desc">Largest first</option>
             <option value="size-asc">Smallest first</option>
           </select>
-        </div>
+        </label>
 
-        <div className="view-toggle" role="group" aria-label="View">
+        <div className="tb-view-toggle" role="group" aria-label="Gallery view toggle">
           <button
+            type="button"
             aria-label="Grid view"
             aria-pressed={view === "grid"}
             className={view === "grid" ? "active" : ""}
             onClick={() => onView("grid")}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
-              <rect x="3" y="3" width="7" height="7" rx="1" />
-              <rect x="14" y="3" width="7" height="7" rx="1" />
-              <rect x="3" y="14" width="7" height="7" rx="1" />
-              <rect x="14" y="14" width="7" height="7" rx="1" />
-            </svg>
+            <Grid2x2 size={15} />
           </button>
           <button
+            type="button"
             aria-label="List view"
             aria-pressed={view === "list"}
             className={view === "list" ? "active" : ""}
             onClick={() => onView("list")}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
-              <path d="M8 6h13" />
-              <path d="M8 12h13" />
-              <path d="M8 18h13" />
-              <path d="M3 6h.01" />
-              <path d="M3 12h.01" />
-              <path d="M3 18h.01" />
-            </svg>
+            <List size={15} />
           </button>
         </div>
 
-        <span className="count-pill">
-          {count} {count === 1 ? "item" : "items"}
-        </span>
+        <button type="button" className="tb-primary-button toolbar" onClick={onUpload}>
+          <Upload size={16} />
+          <span>Upload</span>
+        </button>
       </div>
     </div>
   );

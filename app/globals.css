@@ -80,6 +80,24 @@ a { color: inherit; }
 .avatar { width: 70px; height: 70px; display: grid; place-items: center; border: 1px solid rgba(89,198,243,.25); border-radius: 20px; color: #8cd8f7; background: linear-gradient(145deg, rgba(47,166,218,.18), rgba(47,166,218,.05)); font-family: Manrope, sans-serif; font-size: 20px; font-weight: 700; }
 .dashboard-grid { display: grid; grid-template-columns: 1.35fr .65fr; gap: 18px; }
 .profile-card, .storage-card { border: 1px solid var(--line); border-radius: 16px; background: rgba(17,22,25,.8); box-shadow: 0 25px 60px rgba(0,0,0,.16); }
+
+/* Storage Feature */
+.storage-feature-card { grid-column: span 2; }
+.upload-zone { margin: 20px 0; padding: 30px; border: 2px dashed rgba(255, 255, 255, 0.1); border-radius: 12px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.upload-button { width: fit-content; padding: 0 24px; cursor: pointer; }
+.file-list { margin-top: 20px; }
+.empty-files { padding: 40px; text-align: center; color: #68757d; font-size: 14px; }
+.file-items-list { list-style: none; padding: 0; margin: 0; }
+.file-item { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.07); }
+.file-item:last-child { border-bottom: 0; }
+.file-info { display: flex; flex-direction: column; gap: 4px; }
+.file-name { color: #cbd4da; font-size: 14px; font-weight: 500; }
+.file-meta { color: #68757d; font-size: 11px; }
+.file-actions { display: flex; gap: 8px; }
+.icon-button { background: transparent; border: 1px solid rgba(255, 255, 255, 0.1); color: #8f9ba6; padding: 8px; border-radius: 8px; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; }
+.icon-button:hover { background: rgba(255, 255, 255, 0.05); color: white; border-color: rgba(255, 255, 255, 0.2); }
+.icon-button.delete:hover { color: #ff8585; border-color: rgba(255, 133, 133, 0.2); }
+
 .profile-card { padding: 26px; }
 .card-label { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 12px; font-weight: 600; }
 .verified-pill { padding: 5px 8px; border-radius: 999px; color: #72cc9e; background: rgba(67,195,132,.08); font-size: 9px; }

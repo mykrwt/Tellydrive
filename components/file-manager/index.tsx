@@ -40,10 +40,20 @@ export function FileManager({
   initialFolders,
   initialFiles,
   initialPath,
+  initialSearch,
+  summary,
 }: {
   initialFolders: ClientFolder[];
   initialFiles: ClientFile[];
   initialPath: ClientFolder[];
+  initialSearch: string;
+  summary: {
+    storageUsedLabel: string;
+    storageModeLabel: string;
+    storageRemainingLabel: string;
+    fileCount: number;
+    folderCount: number;
+  };
 }) {
   // ── Navigation state ──
   const [cwd, setCwd] = useState<string | null>(null);
@@ -73,7 +83,7 @@ export function FileManager({
     const order = saved?.split("-")[1] as SortOrder | undefined;
     return order === "asc" || order === "desc" ? order : "asc";
   });
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(initialSearch);
   const [category, setCategory] = useState<CategoryFilter>("all");
 
   // ── Selection / UI state ──
@@ -197,7 +207,7 @@ export function FileManager({
     const q = search.trim().toLowerCase();
     if (q) out = out.filter((f) => f.name.toLowerCase().includes(q));
     out.sort((a, b) => {
-      let cmp = a.name.localeCompare(b.name);
+      const cmp = a.name.localeCompare(b.name);
       return sortOrder === "asc" ? cmp : -cmp;
     });
     return out;
@@ -425,7 +435,7 @@ export function FileManager({
   return (
     <div
       ref={dropRef}
-      className="fm-root"
+      className="fm-root tb-files-page"
       onDragOver={(e) => {
         e.preventDefault();
         setDragOver(true);
@@ -435,214 +445,170 @@ export function FileManager({
       }}
       onDrop={onDropUpload}
     >
-      {/* Topbar: Path, Title, and Primary Action Buttons */}
-      <div className="fm-topbar-header">
-        <div className="fm-topbar-path-area">
-          <div className="fm-page-title-row">
-            <div className="fm-title-badge">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-              </svg>
-            </div>
-            <div>
-              <h1 className="fm-page-title">{cwd === null ? "My Files" : currentFolderName}</h1>
-              <p className="fm-page-desc">
-                {cwd === null ? "Cloud storage drive · Folders & documents" : `Inside folder: ${currentFolderName}`}
-              </p>
-            </div>
-          </div>
+      <section className="tb-page-intro compact files">
+        <div>
+          <span className="tb-eyebrow">Files</span>
+          <h1>{cwd === null ? "A cleaner home for every document." : currentFolderName}</h1>
+          <p>
+            {cwd === null
+              ? "Browse folders, documents, archives, and media with a compact Dropbox-style layout."
+              : `Everything inside ${currentFolderName} with quick actions and lightweight controls.`}
+          </p>
+        </div>
+      </section>
 
-          {/* Breadcrumb Navigation Trail */}
-          <nav className="fm-breadcrumbs-wrap" aria-label="Breadcrumb path">
-            {cwd !== null && (
-              <button
-                type="button"
-                className="fm-back-btn"
-                onClick={goUpOneLevel}
-                aria-label="Go up one folder"
-                title="Go up one folder"
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-                  <path d="M19 12H5" />
-                  <path d="M12 19l-7-7 7-7" />
+      <section className="tb-panel tb-files-header-surface">
+        <div className="tb-files-header-top">
+          <div className="tb-files-breadcrumb-block">
+            <div className="tb-files-heading-row">
+              <div className="fm-title-badge tb-files-title-badge">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
                 </svg>
-                <span>Back</span>
-              </button>
-            )}
-            <ol className="fm-breadcrumbs-list">
-              <li>
+              </div>
+              <div>
+                <h2 className="tb-files-heading">{cwd === null ? "My Files" : currentFolderName}</h2>
+                <p className="tb-files-heading-copy">{cwd === null ? "Root library" : "Nested folder view"}</p>
+              </div>
+            </div>
+
+            <nav className="fm-breadcrumbs-wrap tb-files-breadcrumbs" aria-label="Breadcrumb path">
+              {cwd !== null && (
                 <button
                   type="button"
-                  className={`fm-crumb-btn ${cwd === null ? "active" : ""}`}
-                  onClick={() => goToPath(-1)}
+                  className="fm-back-btn"
+                  onClick={goUpOneLevel}
+                  aria-label="Go up one folder"
+                  title="Go up one folder"
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                    <path d="M19 12H5" />
+                    <path d="M12 19l-7-7 7-7" />
                   </svg>
-                  <span>My Files</span>
+                  <span>Back</span>
                 </button>
-              </li>
-              {path.map((folder, i) => (
-                <li key={folder.id} className="fm-crumb-node">
-                  <span aria-hidden="true" className="fm-crumb-sep">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <path d="M9 18l6-6-6-6" />
+              )}
+              <ol className="fm-breadcrumbs-list">
+                <li>
+                  <button type="button" className={`fm-crumb-btn ${cwd === null ? "active" : ""}`} onClick={() => goToPath(-1)}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
                     </svg>
-                  </span>
-                  <button
-                    type="button"
-                    className={`fm-crumb-btn ${i === path.length - 1 ? "active" : ""}`}
-                    onClick={() => goToPath(i)}
-                    title={folder.name}
-                  >
-                    <span>{folder.name}</span>
+                    <span>My Files</span>
                   </button>
                 </li>
-              ))}
-            </ol>
-          </nav>
-        </div>
+                {path.map((folder, i) => (
+                  <li key={folder.id} className="fm-crumb-node">
+                    <span aria-hidden="true" className="fm-crumb-sep">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path d="M9 18l6-6-6-6" />
+                      </svg>
+                    </span>
+                    <button
+                      type="button"
+                      className={`fm-crumb-btn ${i === path.length - 1 ? "active" : ""}`}
+                      onClick={() => goToPath(i)}
+                      title={folder.name}
+                    >
+                      <span>{folder.name}</span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            </nav>
+          </div>
 
-        {/* Top Right Action Buttons */}
-        <div className="fm-topbar-actions">
-          <button
-            className="btn-fm-action btn-fm-secondary"
-            onClick={() => setDialog({ type: "new-folder" })}
-            aria-label="Create new folder"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-              <path d="M12 11v6" />
-              <path d="M9 14h6" />
-            </svg>
-            <span>New folder</span>
-          </button>
-          <button
-            className="btn-fm-action btn-fm-primary"
-            onClick={() => fileInputRef.current?.click()}
-            aria-label="Upload files"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="17 8 12 3 7 8" />
-              <line x1="12" y1="3" x2="12" y2="15" />
-            </svg>
-            <span>Upload files</span>
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            style={{ display: "none" }}
-            onChange={(e) => {
-              if (e.target.files) void uploadFiles(e.target.files, cwd);
-              e.target.value = "";
-            }}
-          />
-        </div>
-      </div>
-
-      {/* Category Filter Chips Bar */}
-      <div className="fm-category-bar">
-        <div className="fm-category-chips" role="tablist" aria-label="Filter by file type">
-          <button
-            role="tab"
-            aria-selected={category === "all"}
-            className={`fm-chip ${category === "all" ? "active" : ""}`}
-            onClick={() => setCategory("all")}
-          >
-            <span>All Items</span>
-            <span className="fm-chip-count">{categoryCounts.all}</span>
-          </button>
-
-          {categoryCounts.folders > 0 && (
-            <button
-              role="tab"
-              aria-selected={category === "folders"}
-              className={`fm-chip ${category === "folders" ? "active" : ""}`}
-              onClick={() => setCategory("folders")}
-            >
-              <span>Folders</span>
-              <span className="fm-chip-count">{categoryCounts.folders}</span>
+          <div className="tb-files-primary-actions">
+            <div className="tb-storage-mini-card">
+              <span>Storage</span>
+              <strong>{summary.storageUsedLabel}</strong>
+              <em>{summary.storageModeLabel}</em>
+            </div>
+            <button className="btn-fm-action btn-fm-secondary tb-secondary-button" onClick={() => setDialog({ type: "new-folder" })} aria-label="Create new folder">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                <path d="M12 11v6" />
+                <path d="M9 14h6" />
+              </svg>
+              <span>New folder</span>
             </button>
-          )}
-
-          <button
-            role="tab"
-            aria-selected={category === "documents"}
-            className={`fm-chip ${category === "documents" ? "active" : ""}`}
-            onClick={() => setCategory("documents")}
-          >
-            <span>Documents</span>
-            {categoryCounts.documents > 0 && <span className="fm-chip-count">{categoryCounts.documents}</span>}
-          </button>
-
-          <button
-            role="tab"
-            aria-selected={category === "media"}
-            className={`fm-chip ${category === "media" ? "active" : ""}`}
-            onClick={() => setCategory("media")}
-          >
-            <span>Media</span>
-            {categoryCounts.media > 0 && <span className="fm-chip-count">{categoryCounts.media}</span>}
-          </button>
-
-          <button
-            role="tab"
-            aria-selected={category === "audio"}
-            className={`fm-chip ${category === "audio" ? "active" : ""}`}
-            onClick={() => setCategory("audio")}
-          >
-            <span>Audio</span>
-            {categoryCounts.audio > 0 && <span className="fm-chip-count">{categoryCounts.audio}</span>}
-          </button>
-
-          <button
-            role="tab"
-            aria-selected={category === "archives"}
-            className={`fm-chip ${category === "archives" ? "active" : ""}`}
-            onClick={() => setCategory("archives")}
-          >
-            <span>Archives</span>
-            {categoryCounts.archives > 0 && <span className="fm-chip-count">{categoryCounts.archives}</span>}
-          </button>
+            <button className="btn-fm-action btn-fm-primary tb-primary-button" onClick={() => fileInputRef.current?.click()} aria-label="Upload files">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+              <span>Upload</span>
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              style={{ display: "none" }}
+              onChange={(e) => {
+                if (e.target.files) void uploadFiles(e.target.files, cwd);
+                e.target.value = "";
+              }}
+            />
+          </div>
         </div>
-      </div>
 
-      {/* Toolbar: Search, Sort, Stats & View Toggles */}
-      <div className="fm-toolbar">
-        <div className="fm-toolbar-left">
-          <div className="fm-search-wrap">
+        <div className="fm-category-bar tb-files-category-bar">
+          <div className="fm-category-chips" role="tablist" aria-label="Filter by file type">
+            <button role="tab" aria-selected={category === "all"} className={`fm-chip ${category === "all" ? "active" : ""}`} onClick={() => setCategory("all")}>
+              <span>All items</span>
+              <span className="fm-chip-count">{categoryCounts.all}</span>
+            </button>
+            {categoryCounts.folders > 0 && (
+              <button role="tab" aria-selected={category === "folders"} className={`fm-chip ${category === "folders" ? "active" : ""}`} onClick={() => setCategory("folders")}>
+                <span>Folders</span>
+                <span className="fm-chip-count">{categoryCounts.folders}</span>
+              </button>
+            )}
+            <button role="tab" aria-selected={category === "documents"} className={`fm-chip ${category === "documents" ? "active" : ""}`} onClick={() => setCategory("documents")}>
+              <span>Documents</span>
+              {categoryCounts.documents > 0 ? <span className="fm-chip-count">{categoryCounts.documents}</span> : null}
+            </button>
+            <button role="tab" aria-selected={category === "media"} className={`fm-chip ${category === "media" ? "active" : ""}`} onClick={() => setCategory("media")}>
+              <span>Media</span>
+              {categoryCounts.media > 0 ? <span className="fm-chip-count">{categoryCounts.media}</span> : null}
+            </button>
+            <button role="tab" aria-selected={category === "audio"} className={`fm-chip ${category === "audio" ? "active" : ""}`} onClick={() => setCategory("audio")}>
+              <span>Audio</span>
+              {categoryCounts.audio > 0 ? <span className="fm-chip-count">{categoryCounts.audio}</span> : null}
+            </button>
+            <button role="tab" aria-selected={category === "archives"} className={`fm-chip ${category === "archives" ? "active" : ""}`} onClick={() => setCategory("archives")}>
+              <span>Archives</span>
+              {categoryCounts.archives > 0 ? <span className="fm-chip-count">{categoryCounts.archives}</span> : null}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <div className="tb-toolbar files sticky">
+        <div className="tb-toolbar-main">
+          <div className="tb-search-field files">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="11" cy="11" r="8" />
               <path d="M21 21l-4.35-4.35" />
             </svg>
-            <input
-              placeholder="Filter files by name…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              aria-label="Filter files"
-            />
-            {search && (
-              <button className="clear-search" onClick={() => setSearch("")} aria-label="Clear filter">
-                ×
-              </button>
-            )}
+            <input placeholder="Search names in this view" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Filter files" />
+            {search ? <button className="tb-clear-button" onClick={() => setSearch("")} aria-label="Clear filter">×</button> : null}
           </div>
-
-          <div className="fm-stats-pill">
-            <span>
-              {visibleFolders.length > 0 && `${visibleFolders.length} ${visibleFolders.length === 1 ? "folder" : "folders"}`}
-              {visibleFolders.length > 0 && visibleFiles.length > 0 && " • "}
-              {visibleFiles.length > 0 && `${visibleFiles.length} ${visibleFiles.length === 1 ? "file" : "files"}`}
-              {visibleFiles.length > 0 && ` (${formatBytes(totalFolderBytes)})`}
-              {visibleFolders.length === 0 && visibleFiles.length === 0 && "0 items"}
+          <div className="tb-inline-meta-group">
+            <span className="tb-inline-pill subtle">
+              {visibleFolders.length > 0 ? `${visibleFolders.length} ${visibleFolders.length === 1 ? "folder" : "folders"}` : "0 folders"}
             </span>
+            <span className="tb-inline-pill subtle">
+              {visibleFiles.length > 0 ? `${visibleFiles.length} ${visibleFiles.length === 1 ? "file" : "files"}` : "0 files"}
+            </span>
+            <span className="tb-inline-pill subtle">{formatBytes(totalFolderBytes)}</span>
           </div>
         </div>
 
-        <div className="fm-toolbar-right">
-          <div className="fm-sort-wrap">
+        <div className="tb-toolbar-actions">
+          <span className="tb-inline-pill subtle">Remaining: {summary.storageRemainingLabel}</span>
+          <div className="fm-sort-wrap tb-select-wrap">
             <select
               value={`${sortBy}-${sortOrder}`}
               onChange={(e) => {
@@ -662,14 +628,8 @@ export function FileManager({
             </select>
           </div>
 
-          <div className="view-toggle" role="group" aria-label="View toggle">
-            <button
-              type="button"
-              aria-label="Grid view"
-              aria-pressed={view === "grid"}
-              className={view === "grid" ? "active" : ""}
-              onClick={() => setView("grid")}
-            >
+          <div className="view-toggle tb-view-toggle" role="group" aria-label="View toggle">
+            <button type="button" aria-label="Grid view" aria-pressed={view === "grid"} className={view === "grid" ? "active" : ""} onClick={() => setView("grid")}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <rect x="3" y="3" width="7" height="7" rx="1.5" />
                 <rect x="14" y="3" width="7" height="7" rx="1.5" />
@@ -677,13 +637,7 @@ export function FileManager({
                 <rect x="14" y="14" width="7" height="7" rx="1.5" />
               </svg>
             </button>
-            <button
-              type="button"
-              aria-label="List view"
-              aria-pressed={view === "list"}
-              className={view === "list" ? "active" : ""}
-              onClick={() => setView("list")}
-            >
+            <button type="button" aria-label="List view" aria-pressed={view === "list"} className={view === "list" ? "active" : ""} onClick={() => setView("list")}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M8 6h13" />
                 <path d="M8 12h13" />
@@ -711,7 +665,7 @@ export function FileManager({
       </AnimatePresence>
 
       {/* Main Content Area */}
-      <div className="fm-main">
+      <div className="fm-main tb-content-surface files">
         {!loading && visibleFolders.length === 0 && visibleFiles.length === 0 ? (
           <div className="empty-state fm-empty-card">
             <div className="empty-illustration">
@@ -814,7 +768,6 @@ export function FileManager({
                       selected={selectedFiles.has(file.id)}
                       onSelect={(multi) => toggleFile(file.id, multi)}
                       onOpen={() => openFile(file)}
-                      onDownload={() => void downloadFile(file)}
                       onContext={(e) => {
                         e.preventDefault();
                         if (!selectedFiles.has(file.id)) {
@@ -888,7 +841,7 @@ export function FileManager({
 
       {/* Mobile Floating Action Button */}
       <motion.button
-        className="fab-upload fm-mobile-fab"
+        className="fab-upload fm-mobile-fab tb-mobile-upload"
         whileHover={{ scale: 1.05 }}
         whileTap={{ scale: 0.95 }}
         onClick={() => fileInputRef.current?.click()}
@@ -1145,7 +1098,6 @@ function FileCard({
   selected,
   onSelect,
   onOpen,
-  onDownload,
   onContext,
   onTriggerMenu,
 }: {
@@ -1153,7 +1105,6 @@ function FileCard({
   selected: boolean;
   onSelect: (multi?: boolean) => void;
   onOpen: () => void;
-  onDownload: () => void;
   onContext: (e: React.MouseEvent) => void;
   onTriggerMenu: (pos: { x: number; y: number }) => void;
 }) {

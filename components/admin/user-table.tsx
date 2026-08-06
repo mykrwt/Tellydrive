@@ -19,63 +19,61 @@ export function UserTable({ users, currentAdminId }: { users: AdminUserRow[]; cu
   };
 
   return (
-    <section className="ad-card">
-      <div className="ad-card-head">
+    <section className="tb-panel tb-admin-panel">
+      <div className="tb-panel-head">
         <div>
-          <h3>Users</h3>
-          <p>Accounts on this instance. Promote users to admins to give them access to this page.</p>
+          <span className="tb-panel-label">Users</span>
+          <h2>Account access</h2>
+          <p>Promote trusted members to admins and keep an eye on space usage per user.</p>
         </div>
+        <span className="tb-inline-pill subtle">{users.length} accounts</span>
       </div>
-      {notice && <div className="ad-notice">{notice}</div>}
-      <div className="ad-table-wrap">
-        <table className="ad-table">
-          <thead>
-            <tr>
-              <th>User</th>
-              <th>Files</th>
-              <th>Storage</th>
-              <th>Joined</th>
-              <th>Role</th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((u) => (
-              <tr key={u.id}>
-                <td>
-                  <div className="ad-user">
-                    <span className="ad-avatar">{u.name.slice(0, 1).toUpperCase()}</span>
-                    <div>
-                      <span className="ad-user-name">
-                        {u.name}
-                        {u.id === currentAdminId && <span className="mini-badge">you</span>}
-                      </span>
-                      <span className="ad-user-email">{u.email}</span>
-                    </div>
-                  </div>
-                </td>
-                <td className="muted">{u.fileCount}</td>
-                <td className="muted">{formatBytes(u.totalBytes)}</td>
-                <td className="muted">{formatDate(u.createdAt)}</td>
-                <td>
-                  {u.id === currentAdminId ? (
-                    <span className="mini-badge admin">admin</span>
-                  ) : (
-                    <select
-                      className="ad-role-select"
-                      value={u.role === "admin" ? "admin" : "user"}
-                      disabled={pending}
-                      onChange={(e) => changeRole(u.id, e.target.value as "admin" | "user")}
-                      aria-label={`Role for ${u.name}`}
-                    >
-                      <option value="user">user</option>
-                      <option value="admin">admin</option>
-                    </select>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+
+      {notice ? <div className="tb-admin-notice">{notice}</div> : null}
+
+      <div className="tb-admin-table-wrap">
+        <div className="tb-admin-table-head">
+          <span>User</span>
+          <span>Files</span>
+          <span>Storage</span>
+          <span>Joined</span>
+          <span>Role</span>
+        </div>
+
+        {users.map((user) => (
+          <div key={user.id} className="tb-admin-table-row">
+            <div className="tb-admin-user-cell">
+              <span className="tb-admin-avatar">{user.name.slice(0, 1).toUpperCase()}</span>
+              <div>
+                <strong>
+                  {user.name}
+                  {user.id === currentAdminId ? <em className="tb-inline-pill subtle">You</em> : null}
+                </strong>
+                <span>{user.email}</span>
+              </div>
+            </div>
+            <span className="tb-list-muted">{user.fileCount}</span>
+            <span className="tb-list-muted">{formatBytes(user.totalBytes)}</span>
+            <span className="tb-list-muted">{formatDate(user.createdAt)}</span>
+            <div>
+              {user.id === currentAdminId ? (
+                <span className="tb-inline-pill">Admin</span>
+              ) : (
+                <label className="tb-select-wrap small">
+                  <select
+                    value={user.role === "admin" ? "admin" : "user"}
+                    disabled={pending}
+                    onChange={(event) => changeRole(user.id, event.target.value as "admin" | "user")}
+                    aria-label={`Role for ${user.name}`}
+                  >
+                    <option value="user">user</option>
+                    <option value="admin">admin</option>
+                  </select>
+                </label>
+              )}
+            </div>
+          </div>
+        ))}
       </div>
     </section>
   );

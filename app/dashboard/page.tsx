@@ -3,12 +3,17 @@ import { getCurrentUser } from "@/lib/auth";
 import { findUserById, getFilesForUser, isTelegramSetupEnabled } from "@/lib/telegram-store";
 import { isAdminUser } from "@/lib/admin";
 import { Gallery } from "@/components/gallery";
-import { DashboardNav } from "@/components/dashboard-nav";
 import { TelegramSettings } from "@/components/telegram-settings";
+import { DashboardChrome } from "@/components/dashboard-chrome";
+import { getDashboardSummary } from "@/lib/dashboard-summary";
 
 export const metadata = { title: "Gallery" };
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ search?: string; mime?: string }>;
+}) {
   let safeUser;
   try {
     safeUser = await getCurrentUser();
@@ -17,47 +22,64 @@ export default async function DashboardPage() {
   }
   if (!safeUser) redirect("/sign-in");
 
+  const params = await searchParams;
+  const query = typeof params.search === "string" ? params.search.trim().slice(0, 120) : "";
+  const mime = params.mime === "image" || params.mime === "video" ? params.mime : "all";
+
   const user = await findUserById(safeUser.id);
   if (!user) redirect("/sign-in");
 
-  const files = await getFilesForUser(user.id, { sortBy: "date", sortOrder: "desc", limit: 500 });
-  // Gallery only shows photos & videos — filter before slicing so the first
-  // paint isn't empty just because recent uploads were documents
-  const media = files
-    .filter((f) => f.mimeType.startsWith("image/") || f.mimeType.startsWith("video/"))
+  const [summary, initialResults] = await Promise.all([
+    getDashboardSummary(user.id),
+    getFilesForUser(user.id, {
+      section: "gallery",
+      search: query,
+      mime,
+      sortBy: "date",
+      sortOrder: "desc",
+      limit: 49,
+    }),
+  ]);
+
+  const media = initialResults
+    .filter((file) => file.mimeType.startsWith("image/") || file.mimeType.startsWith("video/"))
     .slice(0, 48);
-  // Only pass safe fields to client — never expose telegramFileId, tokens, or channel IDs
-  const safeFiles = media.map((f) => ({
-    id: f.id,
-    name: f.name,
-    size: f.size,
-    mimeType: f.mimeType,
-    createdAt: f.createdAt,
-    updatedAt: f.updatedAt,
-    chunked: f.chunked,
-    chunkCount: f.chunkCount,
-    folderId: f.folderId,
-    favorite: f.favorite,
-    width: f.width,
-    height: f.height,
-    duration: f.duration,
+
+  const safeFiles = media.map((file) => ({
+    id: file.id,
+    name: file.name,
+    size: file.size,
+    mimeType: file.mimeType,
+    createdAt: file.createdAt,
+    updatedAt: file.updatedAt,
+    chunked: file.chunked,
+    chunkCount: file.chunkCount,
+    folderId: file.folderId,
+    favorite: file.favorite,
+    width: file.width,
+    height: file.height,
+    duration: file.duration,
   }));
   const showTelegramSetup = isTelegramSetupEnabled();
 
   return (
-    <main className="dashboard-page gallery-page">
-      <DashboardNav userName={user.name} isAdmin={isAdminUser(user)} />
-
-      {/* Hidden feature-flagged Telegram setup — not visible by default */}
+    <DashboardChrome
+      user={{ name: user.name, email: user.email, isAdmin: isAdminUser(user) }}
+      summary={summary}
+    >
       {showTelegramSetup && (
-        <div className="telegram-setup-flagged">
+        <div className="tb-flagged-panel">
           <TelegramSettings initialToken={user.telegramToken} initialChatId={user.telegramChatId} />
         </div>
       )}
 
-      <section className="gallery-shell">
-        <Gallery initialFiles={safeFiles} />
-      </section>
-    </main>
+      <Gallery
+        initialFiles={safeFiles}
+        initialHasMore={initialResults.length > 48}
+        initialQuery={query}
+        initialMime={mime}
+        summary={summary}
+      />
+    </DashboardChrome>
   );
 }

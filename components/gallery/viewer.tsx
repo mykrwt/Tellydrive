@@ -38,10 +38,6 @@ export function GalleryViewer({
   }, [index, files.length, onChange]);
 
   useEffect(() => {
-    setLoaded(false); setError(null);
-  }, [index]);
-
-  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
       if (e.key === "ArrowLeft") prev();

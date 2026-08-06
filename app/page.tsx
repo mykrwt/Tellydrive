@@ -9,8 +9,8 @@ import { Cta } from "@/components/landing/cta";
 import { Footer } from "@/components/landing/footer";
 
 export const metadata = {
-  title: { absolute: "TellyDrive — Unlimited cloud storage" },
-  description: "Unlimited space. Instant sync. Total privacy. Start free.",
+  title: { absolute: "TellyBase — Premium cloud storage" },
+  description: "Premium cloud storage with instant sync, privacy-first sharing, and Telegram-backed durability.",
 };
 
 export default async function Home() {

@@ -12,17 +12,67 @@ export type StoredUser = {
   passwordSalt: string;
   createdAt: string;
   lastLoginAt: string | null;
+  // Kept for backward compat; UI hidden via feature flag
   telegramToken?: string;
   telegramChatId?: string;
 };
 
+// Future-ready extensible file type
+export type ChunkMeta = {
+  order: number;
+  messageId: number;
+  fileId: string;
+  size: number;
+};
+
 export type StoredFile = {
+  id: string;
+  userId: string; // owner
+  name: string;
+  telegramFileId: string; // primary file_id (first chunk or single)
+  telegramMessageId?: number; // message_id in storage channel
+  size: number;
+  mimeType: string;
+  createdAt: string;
+  updatedAt?: string;
+  // Media metadata (for gallery)
+  width?: number;
+  height?: number;
+  duration?: number;
+  thumbnailFileId?: string;
+  thumbnailMessageId?: number;
+  // Chunking
+  chunked?: boolean;
+  chunkSize?: number;
+  chunkCount?: number;
+  chunks?: ChunkMeta[];
+  // Folder / organization (future-ready)
+  folderId?: string | null;
+  albumIds?: string[];
+  favorite?: boolean;
+  tags?: string[];
+  // Access / trash
+  trashed?: boolean;
+  trashedAt?: string | null;
+  // Versioning placeholder
+  version?: number;
+};
+
+// Future types (not yet stored, but schema ready)
+export type StoredFolder = {
   id: string;
   userId: string;
   name: string;
-  telegramFileId: string;
-  size: number;
-  mimeType: string;
+  parentId: string | null;
+  createdAt: string;
+};
+
+export type StoredAlbum = {
+  id: string;
+  userId: string;
+  name: string;
+  coverFileId?: string;
+  fileIds: string[];
   createdAt: string;
 };
 
@@ -32,15 +82,14 @@ type AuthDatabase = {
   updatedAt: string;
   users: StoredUser[];
   files: StoredFile[];
+  folders?: StoredFolder[];
+  albums?: StoredAlbum[];
 };
 
-type TelegramResponse<T> =
-  | { ok: true; result: T }
-  | { ok: false; description?: string };
-
+type TelegramResponse<T> = { ok: true; result: T } | { ok: false; description?: string };
 type TelegramChat = { description?: string };
 type TelegramFile = { file_path?: string };
-type TelegramDocumentMessage = { document?: { file_id?: string } };
+type TelegramDocumentMessage = { document?: { file_id?: string }; message_id?: number };
 
 const POINTER = /TBAUTH:([A-Za-z0-9_-]+)/;
 const MAX_DATABASE_BYTES = 5 * 1024 * 1024;
@@ -60,6 +109,8 @@ function emptyDatabase(): AuthDatabase {
     updatedAt: new Date().toISOString(),
     users: [],
     files: [],
+    folders: [],
+    albums: [],
   };
 }
 
@@ -82,15 +133,19 @@ function isStoredUser(value: unknown): value is StoredUser {
 function isStoredFile(value: unknown): value is StoredFile {
   if (!value || typeof value !== "object") return false;
   const file = value as Record<string, unknown>;
-  return (
-    typeof file.id === "string" &&
-    typeof file.userId === "string" &&
-    typeof file.name === "string" &&
-    typeof file.telegramFileId === "string" &&
-    typeof file.size === "number" &&
-    typeof file.mimeType === "string" &&
-    typeof file.createdAt === "string"
-  );
+  // Backward compat: only require core fields
+  if (
+    typeof file.id !== "string" ||
+    typeof file.userId !== "string" ||
+    typeof file.name !== "string" ||
+    typeof file.telegramFileId !== "string" ||
+    typeof file.size !== "number" ||
+    typeof file.mimeType !== "string" ||
+    typeof file.createdAt !== "string"
+  )
+    return false;
+  // New optional fields are validated leniently
+  return true;
 }
 
 function parseDatabase(raw: string): AuthDatabase {
@@ -103,29 +158,57 @@ function parseDatabase(raw: string): AuthDatabase {
   if (db.version !== 1 || !Array.isArray(db.users) || !db.users.every(isStoredUser)) {
     throw new Error("Unsupported or damaged database");
   }
+  const files = Array.isArray(db.files) ? db.files.filter(isStoredFile) : [];
+  // Migrate old files to new schema defaults
+  const migrated: StoredFile[] = files.map((f: unknown) => {
+    const rec = f as Record<string, unknown>;
+    return {
+      ...(rec as StoredFile),
+      updatedAt: (rec.updatedAt as string) ?? (rec.createdAt as string),
+      chunked: Boolean(rec.chunked),
+      chunkCount: (rec.chunkCount as number) ?? ((rec.chunks as unknown[]) ? (rec.chunks as unknown[]).length : undefined),
+      folderId: (rec.folderId as string | null) ?? null,
+      favorite: Boolean(rec.favorite),
+      trashed: Boolean(rec.trashed),
+      version: (rec.version as number) ?? 1,
+    };
+  });
   return {
     version: 1,
     revision: Number.isInteger(db.revision) ? Number(db.revision) : 0,
     updatedAt: typeof db.updatedAt === "string" ? db.updatedAt : new Date().toISOString(),
     users: db.users,
-    files: Array.isArray(db.files) ? db.files.filter(isStoredFile) : [],
+    files: migrated,
+    folders: Array.isArray(db.folders) ? db.folders : [],
+    albums: Array.isArray(db.albums) ? db.albums : [],
   };
 }
 
 function telegramConfig() {
   let token = process.env.TELEGRAM_BOT_TOKEN?.trim() ?? "";
-  if (token.startsWith("bot")) {
-    token = token.slice(3);
-  }
-  token = token.replace(/^["']|["']$/g, "").trim();
-
+  if (token.startsWith("bot")) token = token.slice(3);
+  token = token.replace(/^[\"']|[\"']$/g, "").trim();
   let chatId = process.env.TELEGRAM_CHAT_ID?.trim() ?? "";
-  chatId = chatId.replace(/^["']|["']$/g, "").trim();
-
+  chatId = chatId.replace(/^[\"']|[\"']$/g, "").trim();
   return {
     token,
     chatId,
     apiBase: (process.env.TELEGRAM_API_BASE ?? "https://api.telegram.org").replace(/\/$/, ""),
+  };
+}
+
+export function storageConfig() {
+  const base = telegramConfig();
+  let storageChatId = process.env.TELEGRAM_STORAGE_CHAT_ID?.trim() ?? "";
+  storageChatId = storageChatId.replace(/^[\"']|[\"']$/g, "").trim();
+  let storageToken = process.env.TELEGRAM_STORAGE_BOT_TOKEN?.trim() ?? "";
+  if (storageToken.startsWith("bot")) storageToken = storageToken.slice(3);
+  storageToken = storageToken.replace(/^[\"']|[\"']$/g, "").trim();
+  return {
+    token: storageToken || base.token,
+    chatId: storageChatId || base.chatId,
+    apiBase: base.apiBase,
+    isSeparate: Boolean(storageChatId),
   };
 }
 
@@ -135,11 +218,15 @@ export function databaseMode(): "telegram" | "local" | "unconfigured" {
   return process.env.NODE_ENV === "production" ? "unconfigured" : "local";
 }
 
+export function isTelegramSetupEnabled(): boolean {
+  // Feature flag: hide telegram config UI unless explicitly enabled
+  // NEXT_PUBLIC_ENABLE_TELEGRAM_SETUP=true to show
+  return process.env.NEXT_PUBLIC_ENABLE_TELEGRAM_SETUP === "true";
+}
+
 async function telegramApi<T>(method: string, body: Record<string, unknown>): Promise<T> {
   const { token, apiBase } = telegramConfig();
-  if (!token) {
-    throw new AccountStoreError("TELEGRAM_BOT_TOKEN is missing.", true);
-  }
+  if (!token) throw new AccountStoreError("TELEGRAM_BOT_TOKEN is missing.", true);
 
   let response: Response;
   try {
@@ -164,31 +251,20 @@ async function telegramApi<T>(method: string, body: Record<string, unknown>): Pr
 
   if (!response.ok || !payload.ok) {
     const detail = payload.ok ? `HTTP ${response.status}` : payload.description || `HTTP ${response.status}`;
-
-    // Harmless warning when chat description hasn't changed
-    if (method === "setChatDescription" && detail.toLowerCase().includes("not modified")) {
-      return {} as T;
-    }
-
+    if (method === "setChatDescription" && detail.toLowerCase().includes("not modified")) return {} as T;
     throw new AccountStoreError(`Telegram ${method} failed: ${detail}`, true);
   }
-
   return payload.result;
 }
 
 async function loadTelegram(): Promise<AuthDatabase> {
   const { token, chatId, apiBase } = telegramConfig();
-  if (!chatId) {
-    throw new AccountStoreError("TELEGRAM_CHAT_ID is missing.", true);
-  }
-
+  if (!chatId) throw new AccountStoreError("TELEGRAM_CHAT_ID is missing.", true);
   const chat = await telegramApi<TelegramChat>("getChat", { chat_id: chatId });
   const fileId = chat.description?.match(POINTER)?.[1];
   if (!fileId) return emptyDatabase();
-
   const file = await telegramApi<TelegramFile>("getFile", { file_id: fileId });
   if (!file.file_path) throw new AccountStoreError("Telegram did not return the database file path.", true);
-
   let response: Response;
   try {
     response = await fetch(`${apiBase}/file/bot${token}/${file.file_path}`, {
@@ -199,30 +275,18 @@ async function loadTelegram(): Promise<AuthDatabase> {
     const msg = err instanceof Error ? err.message : "network error";
     throw new AccountStoreError(`Could not download database file from Telegram (${msg}).`, true);
   }
-
-  if (!response.ok) {
-    throw new AccountStoreError(`Could not download database file from Telegram (HTTP ${response.status}).`, true);
-  }
-
+  if (!response.ok) throw new AccountStoreError(`Could not download database file from Telegram (HTTP ${response.status}).`, true);
   return parseDatabase(await response.text());
 }
 
 async function saveTelegram(database: AuthDatabase): Promise<void> {
   const { token, chatId, apiBase } = telegramConfig();
-  if (!token || !chatId) {
-    throw new AccountStoreError("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is missing.", true);
-  }
-
+  if (!token || !chatId) throw new AccountStoreError("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is missing.", true);
   const serialized = JSON.stringify(database, null, 2);
   const form = new FormData();
   form.append("chat_id", chatId);
-  form.append(
-    "document",
-    new Blob([serialized], { type: "application/json" }),
-    `tellybase-auth-r${database.revision}.json`,
-  );
+  form.append("document", new Blob([serialized], { type: "application/json" }), `tellybase-auth-r${database.revision}.json`);
   form.append("caption", `Tellybase auth database · revision ${database.revision}`);
-
   let response: Response;
   try {
     response = await fetch(`${apiBase}/bot${token}/sendDocument`, {
@@ -235,32 +299,24 @@ async function saveTelegram(database: AuthDatabase): Promise<void> {
     const msg = err instanceof Error ? err.message : "network error";
     throw new AccountStoreError(`Failed to upload database file to Telegram (${msg}).`, true);
   }
-
   let payload: TelegramResponse<TelegramDocumentMessage>;
   try {
     payload = (await response.json()) as TelegramResponse<TelegramDocumentMessage>;
   } catch {
     throw new AccountStoreError(`Invalid response from Telegram when uploading database (HTTP ${response.status}).`, true);
   }
-
   if (!response.ok || !payload.ok) {
     const detail = payload.ok ? `HTTP ${response.status}` : payload.description || `HTTP ${response.status}`;
     throw new AccountStoreError(`Telegram sendDocument failed: ${detail}`, true);
   }
-
   const fileId = payload.result.document?.file_id;
   if (!fileId) throw new AccountStoreError("Telegram did not return a file id for the uploaded database.", true);
-
-  await telegramApi("setChatDescription", {
-    chat_id: chatId,
-    description: `TBAUTH:${fileId}`,
-  });
+  await telegramApi("setChatDescription", { chat_id: chatId, description: `TBAUTH:${fileId}` });
 }
 
 function localPath() {
   return path.join(process.cwd(), ".data", "auth.json");
 }
-
 async function loadLocal(): Promise<AuthDatabase> {
   try {
     return parseDatabase(await readFile(localPath(), "utf8"));
@@ -269,7 +325,6 @@ async function loadLocal(): Promise<AuthDatabase> {
     throw error;
   }
 }
-
 async function saveLocal(database: AuthDatabase): Promise<void> {
   const destination = localPath();
   await mkdir(path.dirname(destination), { recursive: true });
@@ -277,27 +332,21 @@ async function saveLocal(database: AuthDatabase): Promise<void> {
   await writeFile(temporary, JSON.stringify(database, null, 2), { mode: 0o600 });
   await rename(temporary, destination);
 }
-
 async function load(): Promise<AuthDatabase> {
   const mode = databaseMode();
   if (mode === "telegram") return loadTelegram();
   if (mode === "local") return loadLocal();
-  throw new AccountStoreError(
-    "Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to enable sign in.",
-    true,
-  );
+  throw new AccountStoreError("Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to enable sign in.", true);
 }
-
 async function save(database: AuthDatabase): Promise<void> {
   if (databaseMode() === "telegram") return saveTelegram(database);
   return saveLocal(database);
 }
-
 function serialized<T>(operation: () => Promise<T>): Promise<T> {
   const result = queue.then(operation, operation);
   queue = result.then(
     () => undefined,
-    () => undefined,
+    () => undefined
   );
   return result;
 }
@@ -308,27 +357,22 @@ export async function findUserByEmail(email: string): Promise<StoredUser | null>
     return database.users.find((user) => user.email === email) ?? null;
   });
 }
-
 export async function findUserById(id: string): Promise<StoredUser | null> {
   return serialized(async () => {
     const database = await load();
     return database.users.find((user) => user.id === id) ?? null;
   });
 }
-
 export async function createUser(user: StoredUser): Promise<void> {
   return serialized(async () => {
     const database = await load();
-    if (database.users.some((entry) => entry.email === user.email)) {
-      throw new AccountStoreError("An account with that email already exists.");
-    }
+    if (database.users.some((entry) => entry.email === user.email)) throw new AccountStoreError("An account with that email already exists.");
     database.users.push(user);
     database.revision += 1;
     database.updatedAt = new Date().toISOString();
     await save(database);
   });
 }
-
 export async function markLogin(id: string): Promise<void> {
   return serialized(async () => {
     const database = await load();
@@ -340,29 +384,101 @@ export async function markLogin(id: string): Promise<void> {
     await save(database);
   });
 }
-
 export async function updateUserSettings(
   userId: string,
-  updates: { telegramToken?: string; telegramChatId?: string },
+  updates: { telegramToken?: string; telegramChatId?: string }
 ): Promise<void> {
   return serialized(async () => {
     const database = await load();
     const user = database.users.find((entry) => entry.id === userId);
     if (!user) throw new Error("User not found");
-    
     if (updates.telegramToken !== undefined) user.telegramToken = updates.telegramToken;
     if (updates.telegramChatId !== undefined) user.telegramChatId = updates.telegramChatId;
-    
     database.revision += 1;
     database.updatedAt = new Date().toISOString();
     await save(database);
   });
 }
 
-export async function getFilesForUser(userId: string): Promise<StoredFile[]> {
+// ── File operations with owner isolation ──
+
+export type FileQuery = {
+  search?: string;
+  mime?: "image" | "video" | "all";
+  sortBy?: "name" | "size" | "date";
+  sortOrder?: "asc" | "desc";
+  folderId?: string | null; // future
+  favorite?: boolean;
+  trashed?: boolean;
+  limit?: number;
+  offset?: number;
+};
+
+function applyFilters(files: StoredFile[], q: FileQuery): StoredFile[] {
+  let out = files.slice();
+
+  // Hide trashed by default
+  const showTrashed = q.trashed === true;
+  out = out.filter((f) => (showTrashed ? f.trashed : !f.trashed));
+
+  if (q.mime && q.mime !== "all") {
+    out = out.filter((f) => {
+      const isImage = f.mimeType.startsWith("image/");
+      const isVideo = f.mimeType.startsWith("video/");
+      return q.mime === "image" ? isImage : isVideo;
+    });
+  }
+  if (q.folderId !== undefined) {
+    out = out.filter((f) => (f.folderId ?? null) === q.folderId);
+  }
+  if (q.favorite) out = out.filter((f) => f.favorite);
+  if (q.search) {
+    const s = q.search.toLowerCase();
+    out = out.filter((f) => f.name.toLowerCase().includes(s));
+  }
+
+  // Sort
+  const sortBy = q.sortBy ?? "date";
+  const order = q.sortOrder ?? "desc";
+  out.sort((a, b) => {
+    let cmp = 0;
+    if (sortBy === "name") cmp = a.name.localeCompare(b.name);
+    else if (sortBy === "size") cmp = a.size - b.size;
+    else cmp = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    return order === "asc" ? cmp : -cmp;
+  });
+  return out;
+}
+
+export async function getFilesForUser(userId: string, query: FileQuery = {}): Promise<StoredFile[]> {
   return serialized(async () => {
     const database = await load();
-    return database.files.filter((file) => file.userId === userId);
+    const owned = database.files.filter((file) => file.userId === userId);
+    const filtered = applyFilters(owned, query);
+    const limit = query.limit ?? filtered.length;
+    const offset = query.offset ?? 0;
+    return filtered.slice(offset, offset + limit);
+  });
+}
+
+export async function getFilesPaginated(
+  userId: string,
+  query: FileQuery & { limit: number; offset: number }
+): Promise<{ files: StoredFile[]; total: number }> {
+  return serialized(async () => {
+    const database = await load();
+    const owned = database.files.filter((f) => f.userId === userId);
+    const filtered = applyFilters(owned, query);
+    const total = filtered.length;
+    const slice = filtered.slice(query.offset, query.offset + query.limit);
+    return { files: slice, total };
+  });
+}
+
+export async function countFilesForUser(userId: string): Promise<number> {
+  return serialized(async () => {
+    const database = await load();
+    return database.files.filter((f) => f.userId === userId && !f.trashed).length;
   });
 }
 
@@ -376,12 +492,27 @@ export async function addFile(file: StoredFile): Promise<void> {
   });
 }
 
+export async function updateFile(userId: string, fileId: string, patch: Partial<StoredFile>): Promise<void> {
+  return serialized(async () => {
+    const database = await load();
+    const idx = database.files.findIndex((f) => f.id === fileId && f.userId === userId);
+    if (idx === -1) throw new AccountStoreError("File not found.");
+    // Prevent owner hijacking
+    const { userId: _uid, id: _id, ...safePatch } = patch;
+    void _uid;
+    void _id;
+    database.files[idx] = { ...database.files[idx], ...safePatch, updatedAt: new Date().toISOString() } as StoredFile;
+    database.revision += 1;
+    database.updatedAt = new Date().toISOString();
+    await save(database);
+  });
+}
+
 export async function removeFile(fileId: string, userId: string): Promise<void> {
   return serialized(async () => {
     const database = await load();
     const index = database.files.findIndex((f) => f.id === fileId && f.userId === userId);
     if (index === -1) return;
-
     const file = database.files[index];
     if (file.telegramFileId.startsWith("local:")) {
       const localId = file.telegramFileId.slice(6);
@@ -389,11 +520,21 @@ export async function removeFile(fileId: string, userId: string): Promise<void> 
       try {
         const { unlink } = await import("node:fs/promises");
         await unlink(filePath);
-      } catch (err) {
-        console.error("Failed to delete local file:", err);
+      } catch {}
+      // Also clean chunks if chunked local (future)
+      if (file.chunks) {
+        for (const c of file.chunks) {
+          if (c.fileId.startsWith("local:")) {
+            const cid = c.fileId.slice(6);
+            try {
+              const { unlink } = await import("node:fs/promises");
+              await unlink(path.join(process.cwd(), ".data", "files", cid));
+            } catch {}
+          }
+        }
       }
     }
-
+    // For now we hard delete; future: move to trash
     database.files.splice(index, 1);
     database.revision += 1;
     database.updatedAt = new Date().toISOString();
@@ -401,102 +542,40 @@ export async function removeFile(fileId: string, userId: string): Promise<void> 
   });
 }
 
+export async function moveFileToTrash(fileId: string, userId: string): Promise<void> {
+  return serialized(async () => {
+    const database = await load();
+    const file = database.files.find((f) => f.id === fileId && f.userId === userId);
+    if (!file) throw new AccountStoreError("File not found.");
+    file.trashed = true;
+    file.trashedAt = new Date().toISOString();
+    database.revision += 1;
+    database.updatedAt = new Date().toISOString();
+    await save(database);
+  });
+}
+
+// ── Backward compat wrappers ──
 export async function uploadToTelegram(
   name: string,
   blob: Blob,
   userConfig?: { token: string; chatId: string }
-): Promise<{ fileId: string }> {
-  let token: string | undefined;
-  let chatId: string | undefined;
-  let apiBase = (process.env.TELEGRAM_API_BASE ?? "https://api.telegram.org").replace(/\/$/, "");
-
-  if (userConfig?.token && userConfig?.chatId) {
-    token = userConfig.token;
-    chatId = userConfig.chatId;
-  } else {
-    const config = telegramConfig();
-    token = config.token;
-    chatId = config.chatId;
-    apiBase = config.apiBase;
-  }
-
-  if (!token || !chatId) {
-    if (databaseMode() === "local") {
-      const id = randomUUID();
-      const destination = path.join(process.cwd(), ".data", "files", id);
-      await mkdir(path.dirname(destination), { recursive: true });
-      await writeFile(destination, Buffer.from(await blob.arrayBuffer()));
-      return { fileId: `local:${id}` };
-    }
-    throw new AccountStoreError("Telegram configuration is missing. Please set your Bot Token and Chat ID in settings.");
-  }
-
-  const form = new FormData();
-  form.append("chat_id", chatId);
-  form.append("document", blob, name);
-
-  let response: Response;
-  try {
-    response = await fetch(`${apiBase}/bot${token}/sendDocument`, {
-      method: "POST",
-      body: form,
-      cache: "no-store",
-      signal: AbortSignal.timeout(60_000), // Files can take longer
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "network error";
-    throw new AccountStoreError(`Failed to upload file to Telegram (${msg}).`);
-  }
-
-  let payload: TelegramResponse<TelegramDocumentMessage>;
-  try {
-    payload = (await response.json()) as TelegramResponse<TelegramDocumentMessage>;
-  } catch {
-    throw new AccountStoreError(`Invalid response from Telegram (HTTP ${response.status}).`);
-  }
-
-  if (!response.ok || !payload.ok) {
-    const detail = payload.ok ? `HTTP ${response.status}` : payload.description || `HTTP ${response.status}`;
-    throw new AccountStoreError(`Telegram upload failed: ${detail}`);
-  }
-
-  const fileId = payload.result.document?.file_id;
-  if (!fileId) throw new AccountStoreError("Telegram did not return a file id.");
-
-  return { fileId };
+): Promise<{ fileId: string; messageId?: number }> {
+  // Deprecated: use lib/telegram-storage uploadToStorage instead
+  // Keep for existing server actions that still call it
+  const { uploadToStorage } = await import("./telegram-storage");
+  const res = await uploadToStorage(name, blob, {
+    userToken: userConfig?.token,
+    userChatId: userConfig?.chatId,
+  });
+  return { fileId: res.fileId, messageId: res.messageId };
 }
 
 export async function getTelegramFileUrl(fileId: string, userConfig?: { token: string }): Promise<string> {
   if (fileId.startsWith("local:")) {
     const id = fileId.slice(6);
-    return `/api/local-file?id=${id}`;
+    return `/api/local-file?id=${encodeURIComponent(id)}`;
   }
-
-  let token: string | undefined;
-  let apiBase = (process.env.TELEGRAM_API_BASE ?? "https://api.telegram.org").replace(/\/$/, "");
-
-  if (userConfig?.token) {
-    token = userConfig.token;
-  } else {
-    const config = telegramConfig();
-    token = config.token;
-    apiBase = config.apiBase;
-  }
-
-  if (!token) throw new AccountStoreError("Bot Token is missing.");
-
-  // Manual API call to getFile to avoid using the global telegramApi which uses env token
-  const response = await fetch(`${apiBase}/bot${token}/getFile?file_id=${fileId}`, {
-    cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
-  });
-
-  if (!response.ok) throw new AccountStoreError(`Telegram getFile failed (HTTP ${response.status})`);
-  const payload = await response.json();
-  if (!payload.ok) throw new AccountStoreError(`Telegram getFile failed: ${payload.description}`);
-
-  const file_path = payload.result.file_path;
-  if (!file_path) throw new AccountStoreError("Telegram did not return the file path.");
-
-  return `${apiBase}/file/bot${token}/${file_path}`;
+  const { getStorageFileUrl } = await import("./telegram-storage");
+  return getStorageFileUrl(fileId, userConfig?.token);
 }

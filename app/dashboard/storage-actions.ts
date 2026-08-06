@@ -51,7 +51,8 @@ export async function uploadFileAction(formData: FormData) {
   }
   if (!file.type) throw new Error("Missing file type.");
 
-  // Upload via new storage layer (handles chunking, queue, backoff)
+  // Upload via storage layer without transcoding. Telegram document storage preserves
+  // the original file bytes, resolution, and image/video quality; chunking only splits large files.
   let result;
   try {
     result = await uploadToStorage(safeName, file, {});

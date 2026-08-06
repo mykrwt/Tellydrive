@@ -132,13 +132,15 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
     }));
     setQueue((q) => [...q, ...items]);
 
-    // Sequential upload to avoid flooding Telegram (per spec)
+    // Sequential upload to avoid flooding Telegram (per spec).
+    // Append the File exactly as selected/pasted/dropped — no canvas resizing,
+    // re-encoding, or quality reduction — and send it as a document so Telegram stores the original bytes.
     for (const item of items) {
       setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, status: "uploading" as const } : x)));
       try {
         const fd = new FormData();
-        fd.append("file", item.file);
-        // Use API route which handles chunking
+        fd.append("file", item.file, item.file.name);
+        // API route uses sendDocument; image/video bytes are preserved at original quality.
         const res = await fetch("/api/files", { method: "POST", body: fd });
         const data = await res.json().catch(() => ({}));
         if (!res.ok && !data.results) throw new Error(data.error || "Upload failed");

@@ -95,7 +95,8 @@ export async function POST(req: NextRequest) {
   for (const file of allFiles) {
     try {
       const safeName = sanitizeFileName(file.name);
-      // uploadToStorage validates size + mime
+      // Store the uploaded File/Blob unchanged. uploadToStorage sends it as a Telegram
+      // document, so images/videos are saved at the original resolution and quality.
       const result = await uploadToStorage(safeName, file, {});
 
       const stored: StoredFile = {

@@ -58,7 +58,7 @@ export function Footer() {
           ))}
         </div>
         <div className="footer-bottom">
-          <span>© 2026 Tellybase</span>
+          <span>© 2026 TellyDrive</span>
           <span>Private by design</span>
         </div>
       </div>

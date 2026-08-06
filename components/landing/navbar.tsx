@@ -6,7 +6,7 @@ export function Navbar({ signedIn }: { signedIn: boolean }) {
   return (
     <header className="landing-nav">
       <div className="wrap landing-nav-inner">
-        <Link href="/" className="nav-brand" aria-label="Tellybase home">
+        <Link href="/" className="nav-brand" aria-label="TellyDrive home">
           <Logo />
         </Link>
         <nav className="nav-links" aria-label="Product">

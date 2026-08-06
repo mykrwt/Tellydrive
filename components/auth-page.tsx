@@ -16,11 +16,11 @@ export function AuthPage({
 }) {
   return (
     <main className="auth-page">
-      <Link href="/" className="auth-brand" aria-label="Back to Tellybase home">
+      <Link href="/" className="auth-brand" aria-label="Back to TellyDrive home">
         <Logo />
       </Link>
       <AuthForm mode={mode} database={database} initialError={initialError} />
-      <p className="auth-foot">© 2026 Tellybase · Private by design</p>
+      <p className="auth-foot">© 2026 TellyDrive · Private by design</p>
     </main>
   );
 }

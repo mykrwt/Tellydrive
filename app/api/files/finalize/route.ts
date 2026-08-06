@@ -57,6 +57,7 @@ export async function POST(req: NextRequest) {
     parts?: unknown;
     folderId?: unknown;
     allowAny?: unknown;
+    source?: unknown;
   };
   try {
     body = (await req.json()) as typeof body;
@@ -98,6 +99,13 @@ export async function POST(req: NextRequest) {
     if (!folder) return noStore(NextResponse.json({ error: "Target folder not found" }, { status: 404 }));
   }
   const allowAny = body.allowAny === true;
+  const sourceRaw = typeof body.source === "string" ? body.source : undefined;
+  const source =
+    sourceRaw === "gallery" || sourceRaw === "files" || sourceRaw === "admin"
+      ? (sourceRaw as "gallery" | "files" | "admin")
+      : allowAny || folderId
+        ? "files"
+        : "gallery";
 
   // Validate mime before token verification to avoid wasted work on banned types
   const { ok: typeOk } = allowAny ? validateAnyFileType(mimeType, safeName) : validateFileType(mimeType, safeName);
@@ -149,6 +157,7 @@ export async function POST(req: NextRequest) {
     chunkCount: chunked ? count : undefined,
     chunks: chunked ? orderedChunks : undefined,
     folderId,
+    source,
     favorite: false,
     trashed: false,
     version: 1,

@@ -390,7 +390,7 @@ function MiniNavbar() {
       <div className="flex items-center justify-between w-full gap-x-6 sm:gap-x-8">
         <div className="flex items-center gap-2">
           {logoElement}
-          <span className="text-white font-bold text-sm tracking-tight">Tellybase</span>
+          <span className="text-white font-bold text-sm tracking-tight">TellyDrive</span>
         </div>
         <nav className="hidden sm:flex items-center space-x-4 sm:space-x-6 text-sm">
           {navLinksData.map((link) => (
@@ -545,7 +545,7 @@ export const SignInPage = ({ className }: SignInPageProps) => {
                     <div className="space-y-4">
                       <button className="backdrop-blur-[2px] w-full flex items-center justify-center gap-2 bg-white/5 hover:bg-white/10 text-white border border-white/10 rounded-full py-3 px-4 transition-colors">
                         <span className="text-lg">G</span>
-                        <span>Continue with Tellybase</span>
+                        <span>Continue with TellyDrive</span>
                       </button>
                       <div className="flex items-center gap-4">
                         <div className="h-px bg-white/10 flex-1" />
@@ -679,7 +679,7 @@ export const SignInPage = ({ className }: SignInPageProps) => {
                   >
                     <div className="space-y-1">
                       <h1 className="text-[2.5rem] font-bold leading-[1.1] tracking-tight text-white">You&apos;re in!</h1>
-                      <p className="text-[1.25rem] text-white/50 font-light">Welcome to Tellybase</p>
+                      <p className="text-[1.25rem] text-white/50 font-light">Welcome to TellyDrive</p>
                     </div>
                     <motion.div
                       initial={{ scale: 0.8, opacity: 0 }}

@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getFilesForUser, removeFile } from "@/lib/telegram-store";
 import { getStorageFileUrl, getChunkUrls } from "@/lib/telegram-storage";
-import { checkRateLimit, getRetryAfterSec } from "@/lib/rate-limit";
+import { checkRateLimit, checkRateLimitWithIp, getRetryAfterSec, rateLimitHeaders } from "@/lib/rate-limit";
+import { invalidatePrefix } from "@/lib/api-cache";
 
 export const maxDuration = 60;
 
@@ -17,14 +18,19 @@ function noStore(res: NextResponse): NextResponse {
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
   if (!user) return noStore(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
+  // 90/min per user + 60/min per IP burst fuse
+  const dlIp = req.headers.get("cf-connecting-ip") || req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  let dlRl: ReturnType<typeof checkRateLimit> | null = null;
   try {
-    checkRateLimit(user.id, "download");
+    dlRl = checkRateLimitWithIp(user.id, dlIp, "download");
   } catch (e: unknown) {
+    const r = (e as unknown as { result?: ReturnType<typeof checkRateLimit> }).result;
+    const h = r ? rateLimitHeaders(r) : {};
     const resetAt = (e as unknown as { resetAt: number }).resetAt ?? Date.now() + 60000;
     return noStore(
       NextResponse.json({ error: e instanceof Error ? e.message : "Too many requests" }, {
         status: 429,
-        headers: { "Retry-After": String(getRetryAfterSec(resetAt)) },
+        headers: { ...h, "Retry-After": String(getRetryAfterSec(resetAt)) },
       })
     );
   }
@@ -180,14 +186,17 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
   if (!user) return noStore(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
+  const delIp = req.headers.get("cf-connecting-ip") || req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
   try {
-    checkRateLimit(user.id, "delete");
+    checkRateLimitWithIp(user.id, delIp, "delete");
   } catch (e: unknown) {
+    const r = (e as unknown as { result?: ReturnType<typeof checkRateLimit> }).result;
+    const h = r ? rateLimitHeaders(r) : {};
     const resetAt = (e as unknown as { resetAt: number }).resetAt ?? Date.now() + 60000;
     return noStore(
       NextResponse.json({ error: e instanceof Error ? e.message : "Too many requests" }, {
         status: 429,
-        headers: { "Retry-After": String(getRetryAfterSec(resetAt)) },
+        headers: { ...h, "Retry-After": String(getRetryAfterSec(resetAt)) },
       })
     );
   }
@@ -213,5 +222,6 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   if (!file) return noStore(NextResponse.json({ error: "File not found" }, { status: 404 }));
 
   await removeFile(id, user.id);
+  invalidatePrefix(`files:${user.id}:`);
   return noStore(NextResponse.json({ ok: true }));
 }

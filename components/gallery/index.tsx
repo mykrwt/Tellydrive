@@ -32,6 +32,29 @@ export type ClientFile = {
 type ViewMode = "grid" | "list";
 type Tab = "gallery" | "files";
 
+// ── Client cache: queryKey -> { data, total, expires } ──
+type CacheEntry = { files: ClientFile[]; total: number; etag?: string; expires: number };
+const CLIENT_CACHE = new Map<string, CacheEntry>();
+const PENDING_REQUESTS = new Map<string, Promise<{ files: ClientFile[]; total: number; etag?: string }>>();
+const CACHE_TTL_MS = 30_000;
+const DEBOUNCE_MS = 320;
+
+function cacheKeyFor(q: string, mime: string, sortBy: string, sortOrder: string, limit: number, offset: number) {
+  return `${q}|${mime}|${sortBy}|${sortOrder}|${limit}|${offset}`;
+}
+
+// Fetch with retry on 429 (respect Retry-After), abort support, and deduplication
+async function fetchWithRetry(url: string, init: RequestInit, retries = 2): Promise<Response> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const res = await fetch(url, init);
+    if (res.status !== 429 || attempt === retries) return res;
+    const ra = Number(res.headers.get("Retry-After") || "1");
+    const delay = Math.min(5000, isFinite(ra) ? ra * 1000 : 800 * Math.pow(2, attempt));
+    await new Promise((r) => setTimeout(r, delay + Math.random() * 200));
+  }
+  throw new Error("Too many requests");
+}
+
 export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
   // State
   const [files, setFiles] = useState<ClientFile[]>(initialFiles);
@@ -46,10 +69,16 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
   const [dragOver, setDragOver] = useState(false);
   const [context, setContext] = useState<{ x: number; y: number; file: ClientFile } | null>(null);
   const [loading, setLoading] = useState(false);
-  const [hasMore, setHasMore] = useState(false);
+  const [hasMore, setHasMore] = useState(initialFiles.length === 48);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropRef = useRef<HTMLDivElement>(null);
+
+  // Request coalescing / abort
+  const abortRef = useRef<AbortController | null>(null);
+  const requestIdRef = useRef(0);
+  const filesLenRef = useRef(files.length);
+  filesLenRef.current = files.length;
 
   // View persistence
   useEffect(() => {
@@ -65,43 +94,121 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
     localStorage.setItem("tellybase:tab", tab);
   }, [tab]);
 
-  // Fetch with filters (incremental, not scanning Telegram)
-  const fetchFiles = useCallback(async (opts?: { reset?: boolean; append?: boolean }) => {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams({
-        limit: "48",
-        offset: opts?.reset || !opts?.append ? "0" : String(files.length),
-        search: query,
-        mime,
-        sortBy,
-        sortOrder,
-      });
-      const res = await fetch(`/api/files?${params.toString()}`, { cache: "no-store" });
-      if (!res.ok) throw new Error("Failed to load");
-      const data = await res.json();
-      if (opts?.append) setFiles((prev) => [...prev, ...data.files]);
-      else setFiles(data.files);
-      setHasMore(data.files.length === 48 && data.total > (opts?.append ? files.length + data.files.length : data.files.length));
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  }, [query, mime, sortBy, sortOrder, files.length]);
+  // Optimised fetch with client cache, dedup, abort, ETag and stale-while-revalidate
+  const fetchFiles = useCallback(
+    async (opts?: { reset?: boolean; append?: boolean; signal?: AbortSignal }) => {
+      const isAppend = Boolean(opts?.append && !opts?.reset);
+      const limit = 48;
+      const offset = opts?.reset || !isAppend ? 0 : filesLenRef.current;
+      const q = query.trim();
+      const key = cacheKeyFor(q, mime, sortBy, sortOrder, limit, offset);
 
-  // Initial fetch when filters change - debounce search
+      // Serve from client cache if fresh (reset only)
+      if (!isAppend) {
+        const cached = CLIENT_CACHE.get(key);
+        if (cached && Date.now() < cached.expires) {
+          setFiles(cached.files);
+          setHasMore(cached.files.length === limit && cached.total > cached.files.length);
+          // Still revalidate in background (stale-while-revalidate)
+          // fall through to network but don't show loading spinner
+        }
+      }
+
+      // Deduplicate identical in-flight request
+      if (PENDING_REQUESTS.has(key)) {
+        try {
+          const data = await PENDING_REQUESTS.get(key)!;
+          if (opts?.signal?.aborted) return;
+          if (isAppend) setFiles((prev) => [...prev, ...data.files]);
+          else setFiles(data.files);
+          setHasMore(data.files.length === limit && data.total > (isAppend ? offset + data.files.length : data.files.length));
+          return;
+        } catch {
+          // fall through
+        }
+      }
+
+      // Abort previous
+      if (abortRef.current) abortRef.current.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      const signal = opts?.signal || controller.signal;
+      const reqId = ++requestIdRef.current;
+
+      setLoading(true);
+      try {
+        const params = new URLSearchParams({
+          limit: String(limit),
+          offset: String(offset),
+          search: q,
+          mime,
+          sortBy,
+          sortOrder,
+        });
+
+        // ETag: send If-None-Match if we have etag for this key
+        const headers: Record<string, string> = {};
+        const prevCache = CLIENT_CACHE.get(key);
+        if (prevCache?.etag) headers["If-None-Match"] = prevCache.etag;
+
+        const fetchPromise = (async () => {
+          const res = await fetchWithRetry(`/api/files?${params.toString()}`, { cache: "no-store", signal, headers });
+          if (res.status === 304 && prevCache) {
+            // Not modified: extend TTL
+            prevCache.expires = Date.now() + CACHE_TTL_MS;
+            return { files: prevCache.files, total: prevCache.total, etag: prevCache.etag };
+          }
+          if (!res.ok) throw new Error(`Failed to load (${res.status})`);
+          const data = (await res.json()) as { files: ClientFile[]; total: number };
+          const etag = res.headers.get("ETag") || undefined;
+          CLIENT_CACHE.set(key, { files: data.files, total: data.total, etag, expires: Date.now() + CACHE_TTL_MS });
+          // LRU cap 100 keys
+          if (CLIENT_CACHE.size > 100) {
+            const first = CLIENT_CACHE.keys().next().value as string;
+            CLIENT_CACHE.delete(first);
+          }
+          return { files: data.files, total: data.total, etag };
+        })();
+
+        PENDING_REQUESTS.set(key, fetchPromise);
+        const data = await fetchPromise;
+
+        // Ignore if a newer request started
+        if (reqId !== requestIdRef.current) return;
+        if (signal.aborted) return;
+
+        if (isAppend) setFiles((prev) => [...prev, ...data.files]);
+        else setFiles(data.files);
+        setHasMore(data.files.length === limit && data.total > (isAppend ? offset + data.files.length : data.files.length));
+      } catch (e: unknown) {
+        if ((e as Error)?.name === "AbortError") return;
+        console.error(e);
+      } finally {
+        PENDING_REQUESTS.delete(key);
+        if (reqId === requestIdRef.current) setLoading(false);
+      }
+    },
+    [query, mime, sortBy, sortOrder]
+  );
+
+  // Debounced fetch when filters change
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    const t = setTimeout(() => fetchFiles({ reset: true }), 250);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, mime, sortBy, sortOrder]);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      fetchFiles({ reset: true });
+    }, DEBOUNCE_MS);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [query, mime, sortBy, sortOrder, fetchFiles]);
 
-  // Client-side filtered for instant UI when not re-fetching (fallback)
-  const visible = useMemo(() => {
-    // Server already filters; this is for optimistic UI
-    return files;
-  }, [files]);
+  // Cleanup abort on unmount
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
+
+  const visible = useMemo(() => files, [files]);
 
   // Selection
   const toggleSelect = (id: string, multi?: boolean) => {
@@ -126,14 +233,13 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
   }, [viewerFiles]);
   const closeViewer = useCallback(() => setViewerIndex(null), []);
 
-  // Large-file path: split into ≤ 4 MiB parts so each request fits Vercel's
-  // 4.5 MB body limit. Each part is forwarded to Telegram and returns a signed
-  // token; /api/files/finalize stitches the tokens into one file record.
+  // Upload: chunked with retry and progress throttling
   const uploadInParts = useCallback(async (item: QueueItem) => {
     const file = item.file;
     const count = Math.ceil(file.size / PART_UPLOAD_SIZE);
     const uploadId = `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
     const tokens: string[] = [];
+    let lastProgressEmit = 0;
 
     for (let i = 0; i < count; i++) {
       const start = i * PART_UPLOAD_SIZE;
@@ -147,17 +253,36 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
       fd.append("mimeType", file.type || "application/octet-stream");
       fd.append("uploadId", uploadId);
 
-      const res = await fetch("/api/files/upload-part", { method: "POST", body: fd });
-      const data = (await res.json().catch(() => ({}))) as { token?: string; error?: string };
-      if (!res.ok || !data.token) {
+      // Retry with backoff for 429/5xx
+      let attempt = 0;
+      let res: Response | null = null;
+      let data: { token?: string; error?: string } = {};
+      while (attempt < 4) {
+        res = await fetch("/api/files/upload-part", { method: "POST", body: fd });
+        data = (await res.json().catch(() => ({}))) as { token?: string; error?: string };
+        if (res.ok && data.token) break;
+        if (res.status === 429 || res.status >= 500) {
+          const ra = Number(res.headers.get("Retry-After") || "1");
+          await new Promise((r) => setTimeout(r, Math.min(4000, (isFinite(ra) ? ra * 1000 : 600 * Math.pow(2, attempt)) + Math.random() * 200)));
+          attempt++;
+          continue;
+        }
+        break;
+      }
+      if (!res?.ok || !data.token) {
         throw new Error(data.error || `Upload failed (part ${i + 1} of ${count})`);
       }
       tokens.push(data.token);
-      const pct = Math.round(((i + 1) / count) * 95); // last 5% = finalize
-      setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, progress: pct } : x)));
+      const pct = Math.round(((i + 1) / count) * 95);
+      // Throttle progress updates to at most every 120ms
+      const now = Date.now();
+      if (now - lastProgressEmit > 120 || i === count - 1) {
+        lastProgressEmit = now;
+        setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, progress: pct } : x)));
+      }
     }
 
-    const fin = await fetch("/api/files/finalize", {
+    const fin = await fetchWithRetry("/api/files/finalize", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -167,64 +292,59 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
         uploadId,
         parts: tokens,
       }),
-    });
+    }, 2);
     const finData = (await fin.json().catch(() => ({}))) as { id?: string; error?: string };
     if (!fin.ok || !finData.id) throw new Error(finData.error || "Upload failed");
   }, []);
 
-  // Upload handling
-  const uploadFiles = useCallback(async (list: FileList | File[]) => {
-    const arr = Array.from(list);
-    if (!arr.length) return;
+  // Upload handling (batched sequential to avoid Telegram flood)
+  const uploadFiles = useCallback(
+    async (list: FileList | File[]) => {
+      const arr = Array.from(list);
+      if (!arr.length) return;
 
-    // Add to queue UI
-    const items: QueueItem[] = arr.map((f) => ({
-      id: Math.random().toString(36).slice(2),
-      name: f.name,
-      size: f.size,
-      progress: 0,
-      status: "queued" as const,
-      file: f,
-    }));
-    setQueue((q) => [...q, ...items]);
+      const items: QueueItem[] = arr.map((f) => ({
+        id: Math.random().toString(36).slice(2),
+        name: f.name,
+        size: f.size,
+        progress: 0,
+        status: "queued" as const,
+        file: f,
+      }));
+      setQueue((q) => [...q, ...items]);
 
-    // Sequential upload to avoid flooding Telegram (per spec).
-    // Append the File exactly as selected/pasted/dropped — no canvas resizing,
-    // re-encoding, or quality reduction — and send it as a document so Telegram
-    // stores the original bytes.
-    //
-    // Vercel caps request bodies at 4.5 MB, so files larger than one part are
-    // split in the browser and sent as sequential small parts, then finalized.
-    for (const item of items) {
-      setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, status: "uploading" as const } : x)));
-      try {
-        if (item.file.size > PART_UPLOAD_SIZE) {
-          await uploadInParts(item);
-        } else {
-          const fd = new FormData();
-          fd.append("file", item.file, item.file.name);
-          const res = await fetch("/api/files", { method: "POST", body: fd });
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok && !data.results) throw new Error(data.error || "Upload failed");
-          // Even 207 may have partial success
-          const result = data.results?.[0];
-          if (result && !result.ok) throw new Error(result.error || "Upload failed");
+      for (const item of items) {
+        setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, status: "uploading" as const } : x)));
+        try {
+          if (item.file.size > PART_UPLOAD_SIZE) {
+            await uploadInParts(item);
+          } else {
+            const fd = new FormData();
+            fd.append("file", item.file, item.file.name);
+            const res = await fetchWithRetry("/api/files", { method: "POST", body: fd }, 2);
+            const data = (await res.json().catch(() => ({}))) as { results?: Array<{ ok: boolean; error?: string }>; error?: string };
+            if (!res.ok && !data.results) throw new Error(data.error || "Upload failed");
+            const result = data.results?.[0];
+            if (result && !result.ok) throw new Error(result.error || "Upload failed");
+          }
+
+          setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, progress: 100, status: "done" as const } : x)));
+          // Invalidate client cache for this query and refetch
+          CLIENT_CACHE.clear();
+          PENDING_REQUESTS.clear();
+          await fetchFiles({ reset: true });
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, status: "error" as const, error: msg } : x)));
         }
-
-        setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, progress: 100, status: "done" as const } : x)));
-        // Refresh list incrementally without full scan
-        await fetchFiles({ reset: true });
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, status: "error" as const, error: msg } : x)));
       }
-    }
 
-    // Auto-clear done after 3s
-    setTimeout(() => {
-      setQueue((q) => q.filter((x) => x.status === "uploading" || x.status === "queued"));
-    }, 3000);
-  }, [fetchFiles, uploadInParts]);
+      setTimeout(() => {
+        setQueue((q) => q.filter((x) => x.status === "uploading" || x.status === "queued"));
+      }, 3000);
+    },
+    [fetchFiles, uploadInParts]
+  );
 
   // Drag & drop
   useEffect(() => {
@@ -265,33 +385,44 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
     return () => window.removeEventListener("paste", onPaste);
   }, [uploadFiles]);
 
-  // Actions
+  // Actions — batched delete with concurrency, optimistic UI
   const handleDelete = async (ids: string[]) => {
     if (!ids.length) return;
     if (!confirm(`Delete ${ids.length} ${ids.length === 1 ? "file" : "files"}?`)) return;
-    for (const id of ids) {
-      try {
-        const res = await fetch(`/api/files/${id}`, { method: "DELETE" });
-        if (!res.ok) throw new Error("Delete failed");
-      } catch (e: unknown) {
-        alert(e instanceof Error ? e.message : String(e));
-      }
-    }
-    setFiles((prev) => prev.filter((f) => !ids.includes(f.id)));
+    // Optimistic: remove immediately, restore on error
+    const prev = files;
+    setFiles((p) => p.filter((f) => !ids.includes(f.id)));
     clearSelection();
+    // Concurrency 4
+    const concurrency = 4;
+    const errors: string[] = [];
+    for (let i = 0; i < ids.length; i += concurrency) {
+      const batch = ids.slice(i, i + concurrency);
+      const results = await Promise.allSettled(batch.map((id) => fetchWithRetry(`/api/files/${id}`, { method: "DELETE" }, 2)));
+      results.forEach((r, idx) => {
+        if (r.status === "rejected" || (r.status === "fulfilled" && !r.value.ok)) errors.push(batch[idx]);
+      });
+    }
+    if (errors.length) {
+      // Restore failed ones by refetch
+      setFiles(prev);
+      alert(`Failed to delete ${errors.length} file(s)`);
+      CLIENT_CACHE.clear();
+      await fetchFiles({ reset: true });
+    } else {
+      CLIENT_CACHE.clear();
+    }
   };
 
-  const handleDownload = async (file: ClientFile) => {
+  const handleDownload = useCallback(async (file: ClientFile) => {
     try {
-      const res = await fetch(`/api/files/${file.id}?download=1&proxy=1`);
+      const res = await fetchWithRetry(`/api/files/${file.id}?download=1&proxy=1`, {}, 1);
       if (!res.ok) {
-        // Fallback to redirect
         const data = (await fetch(`/api/files/${file.id}`).then((r) => r.json())) as { url?: string; urls?: string[] };
         if (data.url) window.open(data.url, "_blank");
         else if (data.urls) window.open(data.urls[0], "_blank");
         return;
       }
-      // If proxied, stream to download
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -300,27 +431,34 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
       document.body.appendChild(a);
       a.click();
       a.remove();
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
     } catch (e: unknown) {
       alert(e instanceof Error ? e.message : "Download failed");
     }
-  };
+  }, []);
 
   const handleBulkDownload = async () => {
-    for (const f of selectedFiles) await handleDownload(f);
+    // Sequential to avoid browser blocking, but with small gap
+    for (const f of selectedFiles) {
+      await handleDownload(f);
+      await new Promise((r) => setTimeout(r, 250));
+    }
   };
 
-  // Infinite scroll
+  // Infinite scroll — prefetch early with rootMargin 800px
   const observerRef = useRef<IntersectionObserver | null>(null);
   const sentinelRef = useCallback(
     (node: HTMLDivElement | null) => {
       if (loading) return;
       if (observerRef.current) observerRef.current.disconnect();
-      observerRef.current = new IntersectionObserver((entries) => {
-        if (entries[0].isIntersecting && hasMore) {
-          fetchFiles({ append: true });
-        }
-      });
+      observerRef.current = new IntersectionObserver(
+        (entries) => {
+          if (entries[0].isIntersecting && hasMore && !loading) {
+            fetchFiles({ append: true });
+          }
+        },
+        { rootMargin: "800px" }
+      );
       if (node) observerRef.current.observe(node);
     },
     [loading, hasMore, fetchFiles]
@@ -328,24 +466,13 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
 
   return (
     <div ref={dropRef} className="gallery-root">
-      {/* Top bar like Finder / Drive */}
       <div className="gallery-topbar">
         <div className="gallery-topbar-left">
           <div className="gallery-tabs" role="tablist">
-            <button
-              role="tab"
-              aria-selected={tab === "gallery"}
-              className={tab === "gallery" ? "active" : ""}
-              onClick={() => setTab("gallery")}
-            >
+            <button role="tab" aria-selected={tab === "gallery"} className={tab === "gallery" ? "active" : ""} onClick={() => setTab("gallery")}>
               <span className="tab-icon">◈</span> Gallery
             </button>
-            <button
-              role="tab"
-              aria-selected={tab === "files"}
-              className={tab === "files" ? "active" : ""}
-              onClick={() => setTab("files")}
-            >
+            <button role="tab" aria-selected={tab === "files"} className={tab === "files" ? "active" : ""} onClick={() => setTab("files")}>
               <span className="tab-icon">▦</span> Files
             </button>
           </div>
@@ -392,12 +519,7 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
 
       <AnimatePresence>
         {selected.size > 0 && (
-          <SelectionBar
-            count={selected.size}
-            onDelete={() => handleDelete(Array.from(selected))}
-            onDownload={handleBulkDownload}
-            onClear={clearSelection}
-          />
+          <SelectionBar count={selected.size} onDelete={() => handleDelete(Array.from(selected))} onDownload={handleBulkDownload} onClear={clearSelection} />
         )}
       </AnimatePresence>
 
@@ -442,14 +564,7 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
       <DragDropOverlay visible={dragOver} />
       <UploadQueue items={queue} onDismiss={() => setQueue([])} />
 
-      {/* Floating upload button (Apple-like) */}
-      <motion.button
-        className="fab-upload"
-        whileHover={{ scale: 1.04 }}
-        whileTap={{ scale: 0.98 }}
-        onClick={() => fileInputRef.current?.click()}
-        aria-label="Upload files"
-      >
+      <motion.button className="fab-upload" whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.98 }} onClick={() => fileInputRef.current?.click()} aria-label="Upload files">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
           <path d="M12 19V5" />
           <path d="M5 12l7-7 7 7" />
@@ -479,13 +594,7 @@ export function Gallery({ initialFiles }: { initialFiles: ClientFile[] }) {
 
       <AnimatePresence>
         {viewerIndex !== null && viewerFiles[viewerIndex] && (
-          <GalleryViewer
-            files={viewerFiles}
-            index={viewerIndex}
-            onClose={closeViewer}
-            onChange={setViewerIndex}
-            onDownload={handleDownload}
-          />
+          <GalleryViewer files={viewerFiles} index={viewerIndex} onClose={closeViewer} onChange={setViewerIndex} onDownload={handleDownload} />
         )}
       </AnimatePresence>
     </div>

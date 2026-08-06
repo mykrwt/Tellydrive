@@ -97,7 +97,7 @@ function applySecurityHeaders(res: NextResponse) {
   return res;
 }
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const method = req.method;
 
@@ -160,6 +160,7 @@ export async function middleware(req: NextRequest) {
   return res;
 }
 
+export default proxy;
 export const config = {
   matcher: [
     // Run on all routes except static assets

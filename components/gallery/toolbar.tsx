@@ -37,7 +37,7 @@ export function GalleryToolbar({
             <path d="M21 21l-4.35-4.35" />
           </svg>
           <input
-            placeholder="Search photos, videos…"
+            placeholder="Search photos & videos…"
             value={query}
             onChange={(e) => onQuery(e.target.value)}
             aria-label="Search"

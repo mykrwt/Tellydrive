@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { getCurrentUser } from "@/lib/auth";
-import { addFile, type StoredFile } from "@/lib/telegram-store";
+import { addFile, getFolderById, type StoredFile } from "@/lib/telegram-store";
 import { verifyPartToken, type ChunkMeta } from "@/lib/telegram-storage";
-import { sanitizeFileName, validateFileType } from "@/lib/validation";
+import { sanitizeFileName, validateAnyFileType, validateFileType } from "@/lib/validation";
 import { checkRateLimit, getRetryAfterSec } from "@/lib/rate-limit";
 import { MAX_FILE_SIZE_BYTES, MAX_UPLOAD_PARTS, PART_UPLOAD_SIZE } from "@/lib/upload-config";
 
@@ -55,6 +55,8 @@ export async function POST(req: NextRequest) {
     mimeType?: unknown;
     uploadId?: unknown;
     parts?: unknown;
+    folderId?: unknown;
+    allowAny?: unknown;
   };
   try {
     body = (await req.json()) as typeof body;
@@ -84,10 +86,23 @@ export async function POST(req: NextRequest) {
     return noStore(NextResponse.json({ error: "Invalid parts list" }, { status: 400 }));
   }
 
+  // Optional target folder (Files section) + relaxed type allow-list
+  const folderIdRaw = body.folderId;
+  const folderId: string | null =
+    folderIdRaw === null || folderIdRaw === undefined || folderIdRaw === "" || folderIdRaw === "root" ? null : String(folderIdRaw);
+  if (folderId && !/^[a-zA-Z0-9_-]{6,64}$/.test(folderId)) {
+    return noStore(NextResponse.json({ error: "Invalid folderId" }, { status: 400 }));
+  }
+  if (folderId) {
+    const folder = await getFolderById(user.id, folderId);
+    if (!folder) return noStore(NextResponse.json({ error: "Target folder not found" }, { status: 404 }));
+  }
+  const allowAny = body.allowAny === true;
+
   // Validate mime before token verification to avoid wasted work on banned types
-  const { ok: typeOk } = validateFileType(mimeType, safeName);
+  const { ok: typeOk } = allowAny ? validateAnyFileType(mimeType, safeName) : validateFileType(mimeType, safeName);
   if (!typeOk) {
-    return noStore(NextResponse.json({ error: "Only images and videos are supported." }, { status: 400 }));
+    return noStore(NextResponse.json({ error: allowAny ? "This file type is not supported." : "Only images and videos are supported." }, { status: 400 }));
   }
 
   const chunks = new Map<number, ChunkMeta>();
@@ -133,7 +148,7 @@ export async function POST(req: NextRequest) {
     chunkSize: chunked ? PART_UPLOAD_SIZE : undefined,
     chunkCount: chunked ? count : undefined,
     chunks: chunked ? orderedChunks : undefined,
-    folderId: null,
+    folderId,
     favorite: false,
     trashed: false,
     version: 1,

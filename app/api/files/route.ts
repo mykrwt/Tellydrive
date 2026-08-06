@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { getFilesPaginated, addFile, type StoredFile } from "@/lib/telegram-store";
+import { getFilesPaginated, getFolderById, addFile, type StoredFile } from "@/lib/telegram-store";
 import { uploadToStorage, friendlyStorageError } from "@/lib/telegram-storage";
-import { sanitizeFileName, sanitizeSearchQuery, validateFileType } from "@/lib/validation";
+import { sanitizeFileName, sanitizeSearchQuery, validateAnyFileType, validateFileType } from "@/lib/validation";
 import { checkRateLimit, checkRateLimitWithIp, getRetryAfterSec, rateLimitHeaders } from "@/lib/rate-limit";
 import { cachedFetch, etagMatches, invalidatePrefix } from "@/lib/api-cache";
 import { randomUUID } from "node:crypto";
@@ -48,36 +48,50 @@ export async function GET(req: NextRequest) {
   }
 
   const { searchParams } = new URL(req.url);
-  const limit = Math.min(100, Math.max(1, Number(searchParams.get("limit") || 24)));
+  const limit = Math.min(500, Math.max(1, Number(searchParams.get("limit") || 24)));
   const offset = Math.max(0, Number(searchParams.get("offset") || 0));
   const search = sanitizeSearchQuery(searchParams.get("search") || "");
   const mimeParam = searchParams.get("mime");
   const mime: "image" | "video" | "all" = mimeParam === "image" || mimeParam === "video" ? mimeParam : "all";
   const sortBy = (searchParams.get("sortBy") as "name" | "size" | "date") || "date";
   const sortOrder = (searchParams.get("sortOrder") as "asc" | "desc") || "desc";
-  const folderId = searchParams.get("folderId");
+  const folderIdParam = searchParams.get("folderId");
+  const root = searchParams.get("root") === "1";
+  const mediaOnly = searchParams.get("media") === "1";
 
   const validSort = new Set(["name", "size", "date"]);
   const safeSortBy = validSort.has(sortBy) ? sortBy : "date";
   const safeSortOrder = sortOrder === "asc" ? "asc" : "desc";
 
-  if (folderId && !/^[a-zA-Z0-9_-]{1,64}$/.test(folderId)) {
+  // Folder scoping: folderId=<id> (specific folder), root=1 (no folder), absent (everywhere)
+  if (folderIdParam && !/^[a-zA-Z0-9_-]{6,64}$/.test(folderIdParam)) {
     return withSecurity(NextResponse.json({ error: "Invalid folderId" }, { status: 400 }));
   }
+  if (folderIdParam && root) {
+    return withSecurity(NextResponse.json({ error: "Use either folderId or root, not both" }, { status: 400 }));
+  }
+  const folderScope: string | null | undefined = root ? null : folderIdParam ?? undefined;
 
   // Cache key: user + exact query; TTL 10s, stale-while-revalidate via client
-  const cacheKey = `files:${user.id}:${search}:${mime}:${safeSortBy}:${safeSortOrder}:${folderId || ""}:${limit}:${offset}`;
+  const cacheKey = `files:${user.id}:${search}:${mime}:${safeSortBy}:${safeSortOrder}:${folderScope === undefined ? "all" : folderScope ?? "root"}:${mediaOnly ? "media" : ""}:${limit}:${offset}`;
   try {
     const { value, etag, hit } = await cachedFetch(cacheKey, 10_000, async () => {
-      const { files, total } = await getFilesPaginated(user.id, {
+      const all = await getFilesPaginated(user.id, {
         search,
         mime,
         sortBy: safeSortBy,
         sortOrder: safeSortOrder,
-        folderId: folderId ?? undefined,
-        limit,
-        offset,
+        folderId: folderScope,
+        limit: mediaOnly ? 10000 : limit,
+        offset: 0,
       });
+      let files = all.files;
+      let total = all.total;
+      if (mediaOnly) {
+        const media = files.filter((f) => f.mimeType.startsWith("image/") || f.mimeType.startsWith("video/"));
+        total = media.length;
+        files = media.slice(offset, offset + limit);
+      }
       const safeFiles = files.map((f) => ({
         id: f.id,
         name: f.name,
@@ -178,6 +192,20 @@ export async function POST(req: NextRequest) {
   if (!allFiles.length) return withSecurity(NextResponse.json({ error: "No files provided" }, { status: 400 }));
   if (allFiles.length > 20) return withSecurity(NextResponse.json({ error: "Too many files (max 20)" }, { status: 400 }));
 
+  // Optional target folder (Files section) + relaxed type allow-list (documents, audio, …)
+  const folderIdRaw = form.get("folderId");
+  const folderId: string | null =
+    folderIdRaw === null || folderIdRaw === "" || folderIdRaw === "root" ? null : String(folderIdRaw);
+  if (folderId && !/^[a-zA-Z0-9_-]{6,64}$/.test(folderId)) {
+    return withSecurity(NextResponse.json({ error: "Invalid folderId" }, { status: 400 }));
+  }
+  if (folderId) {
+    const folder = await getFolderById(user.id, folderId);
+    if (!folder) return withSecurity(NextResponse.json({ error: "Target folder not found" }, { status: 404 }));
+  }
+  const allowAny = form.get("allowAny") === "1";
+  const typeCheck = allowAny ? validateAnyFileType : validateFileType;
+
   for (const f of allFiles) {
     if (f.size > 2 * 1024 * 1024 * 1024) return withSecurity(NextResponse.json({ error: "File too large" }, { status: 400 }));
     try {
@@ -185,7 +213,7 @@ export async function POST(req: NextRequest) {
     } catch {
       return withSecurity(NextResponse.json({ error: `Invalid file name: ${f.name.slice(0, 50)}` }, { status: 400 }));
     }
-    const { ok } = validateFileType(f.type || "application/octet-stream", f.name);
+    const { ok } = typeCheck(f.type || "application/octet-stream", f.name);
     if (!ok) return withSecurity(NextResponse.json({ error: `Unsupported file type: ${f.name.slice(0, 50)}` }, { status: 400 }));
   }
 
@@ -194,7 +222,7 @@ export async function POST(req: NextRequest) {
   for (const file of allFiles) {
     try {
       const safeName = sanitizeFileName(file.name);
-      const result = await uploadToStorage(safeName, file, {});
+      const result = await uploadToStorage(safeName, file, { allowAny });
 
       const stored: StoredFile = {
         id: randomUUID(),
@@ -210,7 +238,7 @@ export async function POST(req: NextRequest) {
         chunkSize: result.chunkSize,
         chunkCount: result.chunkCount,
         chunks: result.chunks,
-        folderId: null,
+        folderId,
         favorite: false,
         trashed: false,
         version: 1,

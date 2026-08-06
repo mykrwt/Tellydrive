@@ -4,7 +4,7 @@ import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { AccountStoreError } from "./telegram-store";
-import { sanitizeFileName, validateFileSize, validateFileType } from "./validation";
+import { sanitizeFileName, validateAnyFileType, validateFileSize, validateFileType } from "./validation";
 
 // ── Configuration ──
 // Channel 1: Auth DB uses TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID
@@ -225,16 +225,21 @@ export async function uploadToStorage(
     userToken?: string;
     userChatId?: string;
     onProgress?: (uploaded: number, total: number, chunkIndex?: number) => void;
+    // Allow any safe file type (documents, audio, archives…) — used by the Files
+    // section and Admin uploads. Defaults to media-only for the Gallery.
+    allowAny?: boolean;
   }
 ): Promise<UploadResult> {
   const name = sanitizeFileName(originalName);
   const sizeErr = validateFileSize(blob.size);
   if (sizeErr) throw new AccountStoreError(sizeErr);
 
-  const { ok } = validateFileType(blob.type || "application/octet-stream", name);
-  if (!ok) throw new AccountStoreError("Only images and videos are supported.");
-
-  // For now we allow all image/video types; future: documents etc.
+  const { ok } = opts?.allowAny
+    ? validateAnyFileType(blob.type || "application/octet-stream", name)
+    : validateFileType(blob.type || "application/octet-stream", name);
+  if (!ok) {
+    throw new AccountStoreError(opts?.allowAny ? "This file type is not supported." : "Only images and videos are supported.");
+  }
 
   // Determine storage target
   const globalStorage = storageConfig();

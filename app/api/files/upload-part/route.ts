@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { sendPartToStorage, signPartToken, friendlyStorageError } from "@/lib/telegram-storage";
-import { sanitizeFileName, validateFileType } from "@/lib/validation";
+import { sanitizeFileName, validateAnyFileType, validateFileType } from "@/lib/validation";
 import { checkRateLimit, getRetryAfterSec } from "@/lib/rate-limit";
 import { PART_UPLOAD_SIZE, MAX_FILE_SIZE_BYTES, MAX_UPLOAD_PARTS } from "@/lib/upload-config";
 
@@ -62,6 +62,7 @@ export async function POST(req: NextRequest) {
   const count = Number(form.get("count"));
   const totalSize = Number(form.get("size"));
   const mimeType = String(form.get("mimeType") ?? file.type ?? "");
+  const allowAny = form.get("allowAny") === "1";
 
   let safeName: string;
   try {
@@ -91,9 +92,11 @@ export async function POST(req: NextRequest) {
   // Extra check: part index last piece may be smaller
   if (file.size === 0) return noStore(NextResponse.json({ error: "Empty part" }, { status: 400 }));
 
-  const { ok: typeOk } = validateFileType(mimeType || "application/octet-stream", safeName);
+  const { ok: typeOk } = allowAny
+    ? validateAnyFileType(mimeType || "application/octet-stream", safeName)
+    : validateFileType(mimeType || "application/octet-stream", safeName);
   if (!typeOk) {
-    return noStore(NextResponse.json({ error: "Only images and videos are supported." }, { status: 400 }));
+    return noStore(NextResponse.json({ error: allowAny ? "This file type is not supported." : "Only images and videos are supported." }, { status: 400 }));
   }
 
   const uploadId = String(form.get("uploadId") ?? "").slice(0, 64);

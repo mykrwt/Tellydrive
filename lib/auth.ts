@@ -27,13 +27,16 @@ export function normalizeEmail(value: string): string {
 }
 
 export function validateEmail(value: string): boolean {
-  return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(value) && value.length <= 254;
+  // Use regex whitespace/dot tokens (not literal backslashes). The previous
+  // expression treated `s` and `\` as invalid email characters, rejecting
+  // otherwise valid addresses such as `sarah@example.com`.
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) && value.length <= 254;
 }
 
 export function validatePassword(value: string): string | null {
   if (value.length < 8) return "Password must be at least 8 characters.";
   if (value.length > 128) return "Password must be 128 characters or fewer.";
-  if (!/[A-Za-z]/.test(value) || !/\\d/.test(value)) {
+  if (!/[A-Za-z]/.test(value) || !/\d/.test(value)) {
     return "Password must include a letter and a number.";
   }
   return null;

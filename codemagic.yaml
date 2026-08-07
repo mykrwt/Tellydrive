@@ -1,0 +1,90 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  TellyBase — Codemagic CI/CD workflow
+# ─────────────────────────────────────────────────────────────────────────────
+#  Builds the Android app and uploads it as an artifact.
+#
+#  Environment (add as an Environment Group in the Codemagic UI, keep secret):
+#    TELEGRAM_API_ID    — int, from https://my.telegram.org
+#    TELEGRAM_API_HASH  — string, from https://my.telegram.org
+#
+#  These are injected at compile time via --dart-define (see
+#  lib/core/config/app_config.dart). Without them the app builds but the
+#  MTProto engine cannot connect, so set them for a usable release.
+
+workflows:
+  tellybase-android:
+    name: TellyBase Android
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      groups:
+        - tellybase_secrets        # TELEGRAM_API_ID, TELEGRAM_API_HASH
+      vars:
+        PACKAGE_NAME: "app.tellybase"
+        GIT_REPO_URL: "https://github.com/mykrwt/Tellybase.git"
+    cache:
+      cache_paths:
+        - $FLUTTER_ROOT/.pub-cache
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper/dists
+        - $HOME/.pub-cache/hosted
+    triggers:
+      pull_request:
+        branches:
+          - main
+      branch:
+        branches:
+          - main
+      tag:
+        - '*'
+    scripts:
+      - name: Install Flutter dependencies
+        script: |
+          flutter pub get
+
+      - name: Ensure Android toolchain
+        script: |
+          # Generate/refresh any missing platform scaffolding in case it was
+          # not checked in (idempotent).
+          flutter create . --platforms android --org app.tellybase \
+            --project-name tellybase || true
+
+      - name: Static analysis
+        script: |
+          flutter analyze
+
+      - name: Run unit tests
+        script: |
+          flutter test --coverage
+
+      - name: Build APK (debug + release)
+        script: |
+          flutter build apk --debug \
+            --dart-define=TELEGRAM_API_ID=$TELEGRAM_API_ID \
+            --dart-define=TELEGRAM_API_HASH=$TELEGRAM_API_HASH
+          flutter build apk --release \
+            --dart-define=TELEGRAM_API_ID=$TELEGRAM_API_ID \
+            --dart-define=TELEGRAM_API_HASH=$TELEGRAM_API_HASH
+
+      - name: Build AAB (Play release)
+        script: |
+          flutter build appbundle --release \
+            --dart-define=TELEGRAM_API_ID=$TELEGRAM_API_ID \
+            --dart-define=TELEGRAM_API_HASH=$TELEGRAM_API_HASH
+
+    artifacts:
+      - build/app/outputs/flutter-apk/*.apk
+      - build/app/outputs/bundle/release/*.aab
+      - build/coverage/lcov.info
+    publishing:
+      email:
+        recipients:
+          - build@tellybase.app
+      slack:
+        channel: "#tellybase-builds"
+        notify_on_build_start: true
+        notify_on_success: true
+        notify_on_failure: true

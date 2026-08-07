@@ -2,17 +2,21 @@
 ///
 /// The Telegram **api id** and **api hash** are required to speak MTProto.
 /// Get them from https://my.telegram.org. Do NOT commit production values —
-/// keep them in an environment-appropriate secret store and inject them here.
+/// they are injected at build time with `--dart-define=TELEGRAM_API_ID=…` and
+/// `--dart-define=TELEGRAM_API_HASH=…` (see the Codemagic workflow). Local
+/// `flutter run` builds fall back to the placeholder values below.
 class AppConfig {
-  const AppConfig._();
+  AppConfig._();
 
   static const String appName = 'TellyBase';
 
   /// Telegram application id (from https://my.telegram.org).
-  static const int telegramApiId = 0; // TODO: set your api id
+  static const int telegramApiId =
+      int.fromEnvironment('TELEGRAM_API_ID', defaultValue: 0);
 
   /// Telegram application hash (from https://my.telegram.org).
-  static const String telegramApiHash = ''; // TODO: set your api hash
+  static const String telegramApiHash =
+      String.fromEnvironment('TELEGRAM_API_HASH', defaultValue: '');
 
   /// Default chunk size for large files (bytes). Kept well below Telegram's
   /// 2 GiB document cap so a single chunk never overflows the protocol limit.

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- rounded blue tile -->
+    <path
+        android:fillColor="#005AC1"
+        android:pathData="M54,4 A50,50 0 1 0 54,104 A50,50 0 1 0 54,4 Z" />
+    <!-- photo glyph: mountains + sun -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M32,66 L44,50 L54,62 L62,52 L76,66 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M42,40 m-4,0 a4,4 0 1,1 8,0 a4,4 0 1,1 -8,0" />
+</vector>

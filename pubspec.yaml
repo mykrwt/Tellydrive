@@ -1,0 +1,49 @@
+name: tellybase
+description: >-
+  TellyBase — a Google Photos–style private gallery that uses your own Telegram
+  account (MTProto) purely as an invisible authentication and storage engine.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+# Versions are pinned to keep releases reproducible. The MTProto adapter lives in
+# lib/telegram/mtproto/ and is the only file that touches `mtproto`/`televerse`,
+# so upgrading either library only touches that one seam.
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # --- State / DI ----------------------------------------------------------
+  flutter_riverpod: ^2.6.1
+
+  # --- Persistence ---------------------------------------------------------
+  flutter_secure_storage: ^10.0.0   # Telegram session (auth keys) — secure
+  shared_preferences: ^2.5.3        # non-sensitive prefs & small index cache
+  path_provider: ^1.1.0 || ^2.1.5
+  path: ^1.9.0
+
+  # --- Telegram MTProto (the invisible auth + storage engine) -------------
+  # Pure-Dart MTProto client. Only imported by lib/telegram/mtproto/.
+  mtproto: ^0.7.6
+
+  # --- Media / device ------------------------------------------------------
+  photo_manager: ^3.6.2             # scan the device gallery for auto-backup
+  image_picker: ^1.1.2              # manual photo/video selection
+  intl: ^0.20.2
+  video_player: ^2.9.2              # play backed-up videos
+
+  # --- Background work (Android WorkManager) -------------------------------
+  workmanager: ^0.5.2
+
+  # --- Utilities -----------------------------------------------------------
+  uuid: ^4.5.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

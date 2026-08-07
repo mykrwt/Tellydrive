@@ -1,35 +1,90 @@
-workflows:
-  android-build:
-    name: Android APK Build
-    max_build_duration: 60
-    # Individual free plan minutes apply to macOS M2 builds.
-    instance_type: mac_mini_m2
+# ─────────────────────────────────────────────────────────────────────────────
+#  TellyBase — Codemagic CI/CD workflow
+# ─────────────────────────────────────────────────────────────────────────────
+#  Builds the Android app and uploads it as an artifact.
+#
+#  Environment (add as an Environment Group in the Codemagic UI, keep secret):
+#    TELEGRAM_API_ID    — int, from https://my.telegram.org
+#    TELEGRAM_API_HASH  — string, from https://my.telegram.org
+#
+#  These are injected at compile time via --dart-define (see
+#  lib/core/config/app_config.dart). Without them the app builds but the
+#  MTProto engine cannot connect, so set them for a usable release.
 
+workflows:
+  tellybase-android:
+    name: TellyBase Android
+    max_build_duration: 60
+    instance_type: mac_mini_m2
     environment:
       flutter: stable
-      java: 17
-
+      xcode: latest
+      cocoapods: default
+      groups:
+        - tellybase_secrets        # TELEGRAM_API_ID, TELEGRAM_API_HASH
+      vars:
+        PACKAGE_NAME: "app.tellybase"
+        GIT_REPO_URL: "https://github.com/mykrwt/Tellybase.git"
     cache:
       cache_paths:
-        - $HOME/.pub-cache
+        - $FLUTTER_ROOT/.pub-cache
         - $HOME/.gradle/caches
-        - $HOME/.gradle/wrapper
-
+        - $HOME/.gradle/wrapper/dists
+        - $HOME/.pub-cache/hosted
+    triggers:
+      pull_request:
+        branches:
+          - main
+      branch:
+        branches:
+          - main
+      tag:
+        - '*'
     scripts:
-      - name: Show tool versions
+      - name: Install Flutter dependencies
         script: |
-          cd tellybase_mobile
-          flutter --version
-          java -version
-      - name: Get Flutter dependencies
-        script: |
-          cd tellybase_mobile
           flutter pub get
-      - name: Build APK
+
+      - name: Ensure Android toolchain
         script: |
-          cd tellybase_mobile
-          flutter build apk --release
+          # Generate/refresh any missing platform scaffolding in case it was
+          # not checked in (idempotent).
+          flutter create . --platforms android --org app.tellybase \
+            --project-name tellybase || true
+
+      - name: Static analysis
+        script: |
+          flutter analyze
+
+      - name: Run unit tests
+        script: |
+          flutter test --coverage
+
+      - name: Build APK (debug + release)
+        script: |
+          flutter build apk --debug \
+            --dart-define=TELEGRAM_API_ID=$TELEGRAM_API_ID \
+            --dart-define=TELEGRAM_API_HASH=$TELEGRAM_API_HASH
+          flutter build apk --release \
+            --dart-define=TELEGRAM_API_ID=$TELEGRAM_API_ID \
+            --dart-define=TELEGRAM_API_HASH=$TELEGRAM_API_HASH
+
+      - name: Build AAB (Play release)
+        script: |
+          flutter build appbundle --release \
+            --dart-define=TELEGRAM_API_ID=$TELEGRAM_API_ID \
+            --dart-define=TELEGRAM_API_HASH=$TELEGRAM_API_HASH
 
     artifacts:
-      - tellybase_mobile/build/app/outputs/flutter-apk/*.apk
-      - tellybase_mobile/build/app/outputs/apk/**/*.apk
+      - build/app/outputs/flutter-apk/*.apk
+      - build/app/outputs/bundle/release/*.aab
+      - build/coverage/lcov.info
+    publishing:
+      email:
+        recipients:
+          - build@tellybase.app
+      slack:
+        channel: "#tellybase-builds"
+        notify_on_build_start: true
+        notify_on_success: true
+        notify_on_failure: true

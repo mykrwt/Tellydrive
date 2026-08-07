@@ -7,9 +7,7 @@ import '../auth_state.dart';
 
 /// Phone-number entry. Telegram is only ever asked for a login code.
 class SignInScreen extends ConsumerStatefulWidget {
-  const SignInScreen({super.key, this.initialError});
-
-  final String? initialError;
+  const SignInScreen({super.key});
 
   @override
   ConsumerState<SignInScreen> createState() => _SignInScreenState();
@@ -18,19 +16,7 @@ class SignInScreen extends ConsumerStatefulWidget {
 class _SignInScreenState extends ConsumerState<SignInScreen> {
   final _phone = TextEditingController();
   final _formKey = GlobalKey<FormState>();
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.initialError != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text(widget.initialError!)));
-        }
-      });
-    }
-  }
+  bool _busy = false;
 
   @override
   void dispose() {
@@ -40,14 +26,21 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
-    final phone = _phone.text.replaceAll(RegExp(r'[^0-9+]'), '');
-    await ref.read(authControllerProvider.notifier).sendCode(phone);
+    setState(() => _busy = true);
+    try {
+      final phone = _phone.text.replaceAll(RegExp(r'[^0-9+]'), '');
+      await ref.read(authControllerProvider.notifier).sendCode(phone);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    final sending = ref.watch(authControllerProvider) is AuthCodeRequested;
+    final auth = ref.watch(authControllerProvider);
+    final error = auth is AuthFailed ? auth.error.message : null;
+    final sending = _busy || auth is AuthCodeRequested;
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -114,6 +107,14 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
                             )
                           : const Text('Continue'),
                     ),
+                    if (error != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        error,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: colors.error),
+                      ),
+                    ],
                   ],
                 ),
               ),

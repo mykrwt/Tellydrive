@@ -39,11 +39,12 @@ class RootGate extends ConsumerWidget {
     return switch (auth) {
       AuthUnknown() => const SplashScreen(),
       AuthSignedOut() => const SignInScreen(),
-      AuthFailed(error: final e) => SignInScreen(initialError: e.message),
+      // SignInScreen reads authControllerProvider itself, so the failure
+      // message is rendered reactively even though the widget is reused.
+      AuthFailed() => const SignInScreen(),
       AuthCodeRequested() => const OtpScreen(),
       AuthNeedsPassword() => const TwoFactorScreen(),
       AuthAuthenticated() => const HomeShell(),
-      _ => const SignInScreen(), // exhaustive fallback
     };
   }
 }

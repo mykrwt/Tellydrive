@@ -399,7 +399,6 @@ class FilesScreen extends ConsumerWidget {
     final task = ref.read(uploadControllerProvider.notifier).uploadFiles(
           result.files,
           source: 'files',
-          allowAny: true,
           folderId: ref.read(filesControllerProvider).contents?.folderId,
         );
     unawaited(UploadQueueSheet.show(context));

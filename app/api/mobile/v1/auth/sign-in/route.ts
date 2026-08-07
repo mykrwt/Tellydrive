@@ -7,6 +7,7 @@ import {
   recordLoginAttempt,
   validateEmail,
 } from "@/lib/auth";
+import { assertIdentityCanStartSession, AuthorityError } from "@/lib/backend-authority";
 import {
   enforceMobileAuthRateLimit,
   mobileJson,
@@ -44,12 +45,16 @@ export async function POST(request: NextRequest) {
       recordLoginAttempt(attemptKey, false);
       return mobileJson({ error: "Email or password is incorrect." }, { status: 401 });
     }
+    await assertIdentityCanStartSession(user);
     recordLoginAttempt(attemptKey, true);
     await createSession(user.id, remember);
     return mobileJson({ user: mobileUser(user) });
   } catch (error) {
-    console.error("Mobile sign-in failed:", error);
     recordLoginAttempt(attemptKey, false);
+    if (error instanceof AuthorityError) {
+      return mobileJson({ error: error.message, code: error.code }, { status: error.status });
+    }
+    console.error("Mobile sign-in failed:", error);
     return mobileJson({ error: "The account service is temporarily unavailable." }, { status: 503 });
   }
 }

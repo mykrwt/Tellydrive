@@ -131,7 +131,6 @@ class AdminScreen extends ConsumerWidget {
     final task = ref.read(uploadControllerProvider.notifier).uploadFiles(
           result.files,
           source: 'admin',
-          allowAny: true,
         );
     unawaited(UploadQueueSheet.show(context));
     final completed = await task;

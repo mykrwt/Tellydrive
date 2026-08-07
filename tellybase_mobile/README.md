@@ -14,6 +14,7 @@ other marketing-only route.
 - Sequential resumable-style 4 MiB multipart uploads up to 2 GB with a global
   transfer queue and per-file progress
 - Storage dashboard and account/security experience
+- Backend-authoritative account, subscription, storage, ban, and maintenance policy
 - Admin-only instance metrics, storage breakdown, user list, and role management
 - Dark Material 3 design built for phones and adaptive multi-column layouts
 

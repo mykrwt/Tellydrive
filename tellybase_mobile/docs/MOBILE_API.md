@@ -33,7 +33,8 @@ rate-limited by IP and account key.
 | `GET` | `/api/mobile/v1/dashboard` | Account and storage summary |
 | `PATCH` | `/api/mobile/v1/files/:id/favorite` | Set favorite state |
 | `GET` | `/api/mobile/v1/admin` | Admin metrics and users |
-| `PATCH` | `/api/mobile/v1/admin/users/:id` | Change account role |
+| `PATCH` | `/api/mobile/v1/admin/users/:id` | Change backend role/account/subscription/storage policy |
+| `PATCH` | `/api/mobile/v1/admin/system` | Change backend maintenance state |
 
 ## Existing storage endpoints used by Android
 
@@ -51,3 +52,8 @@ server-side session validation still apply to every operation.
 Media and thumbnails are always streamed from these same-origin APIs. The app
 never receives Telegram Bot API URLs, bot/channel/message IDs, or any other
 System A storage reference.
+
+Session responses include backend-computed account, subscription, and
+entitlement fields for display only. Flutter never authorizes from those cached
+values: every account, storage, upload, download, premium, maintenance, ban, and
+admin decision is re-evaluated by the backend when the operation is requested.

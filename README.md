@@ -58,7 +58,8 @@ Open <http://localhost:3000>. Without Telegram variables, development uses `.dat
 
 > This setup is **System A (operator/admin only)**. Its bots, channels, IDs,
 > sessions, and environment values must never be sent to a browser or mobile
-> client. See [`docs/TELEGRAM_ARCHITECTURE.md`](docs/TELEGRAM_ARCHITECTURE.md).
+> client. See [`docs/TELEGRAM_ARCHITECTURE.md`](docs/TELEGRAM_ARCHITECTURE.md)
+and [`docs/BACKEND_AUTHORITY.md`](docs/BACKEND_AUTHORITY.md).
 
 1. Create a private backend bot with [@BotFather](https://t.me/BotFather) and copy its token into the backend secret manager.
 2. Create a **private channel or supergroup dedicated to TellyDrive** (basic groups are not supported).

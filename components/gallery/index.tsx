@@ -241,6 +241,7 @@ export function Gallery({
       fd.append("size", String(file.size));
       fd.append("mimeType", file.type || "application/octet-stream");
       fd.append("uploadId", uploadId);
+      fd.append("source", "gallery");
 
       let attempt = 0;
       let res: Response | null = null;
@@ -272,14 +273,7 @@ export function Gallery({
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: file.name,
-          size: file.size,
-          mimeType: file.type || "application/octet-stream",
-          uploadId,
-          parts: tokens,
-          source: "gallery",
-        }),
+        body: JSON.stringify({ uploadId, parts: tokens }),
       },
       2
     );

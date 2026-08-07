@@ -49,7 +49,13 @@ class AccountScreen extends ConsumerWidget {
                           children: [
                             Icon(Icons.verified_user_outlined, size: 16, color: Theme.of(context).colorScheme.secondary),
                             const SizedBox(width: 5),
-                            Text(user.isAdmin ? 'Administrator' : 'Private member'),
+                            Text(
+                              user.isAdmin
+                                  ? 'Administrator'
+                                  : user.premiumActive
+                                      ? 'Premium member'
+                                      : 'Private member',
+                            ),
                           ],
                         ),
                       ],
@@ -92,6 +98,14 @@ class AccountScreen extends ConsumerWidget {
                 subtitle: 'Users, storage, roles, and system health',
                 onTap: () => Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => const AdminScreen())),
               ),
+            _SettingsTile(
+              icon: Icons.policy_outlined,
+              color: user.storageEnabled ? const Color(0xFF58D5C9) : const Color(0xFFFF7D8A),
+              title: 'Backend authority',
+              subtitle:
+                  '${user.accountStatus} · ${user.subscriptionTier}/${user.subscriptionStatus} · storage ${user.storageEnabled ? 'enabled' : 'disabled'}',
+              onTap: () => _securityInfo(context),
+            ),
             _SettingsTile(
               icon: Icons.security_rounded,
               color: const Color(0xFF58D5C9),

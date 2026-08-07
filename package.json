@@ -8,7 +8,8 @@
     "start": "next start --hostname 0.0.0.0",
     "lint": "eslint .",
     "security:telegram-boundaries": "node scripts/check-telegram-boundaries.mjs",
-    "check": "npm run security:telegram-boundaries && npm run lint && npm run build",
+    "security:backend-authority": "node scripts/check-telegram-boundaries.mjs",
+    "check": "npm run security:backend-authority && npm run lint && npm run build",
     "make-admin": "node scripts/set-admin.mjs"
   },
   "dependencies": {

@@ -8,6 +8,18 @@ import {
   getAdminAccountTelegramConfig,
 } from "@/lib/server/admin-telegram-config";
 
+export type AccountStatus = "active" | "suspended" | "banned";
+export type SubscriptionTier = "free" | "premium";
+export type SubscriptionStatus = "active" | "inactive" | "past_due" | "cancelled";
+export type StorageAccess = "enabled" | "disabled";
+
+export type StoredSubscription = {
+  tier: SubscriptionTier;
+  status: SubscriptionStatus;
+  expiresAt?: string | null;
+  updatedAt: string;
+};
+
 export type StoredUser = {
   id: string;
   name: string;
@@ -16,9 +28,11 @@ export type StoredUser = {
   passwordSalt: string;
   createdAt: string;
   lastLoginAt: string | null;
-  // Role is assigned only by backend authorization policy.
-  // A System B user Telegram identity can never grant or modify this field.
+  // Every authority field is written and interpreted by the backend only.
   role?: "admin" | "user";
+  accountStatus?: AccountStatus;
+  subscription?: StoredSubscription;
+  storageAccess?: StorageAccess;
 };
 
 // Future-ready extensible file type
@@ -81,6 +95,16 @@ export type StoredAlbum = {
   createdAt: string;
 };
 
+export type MaintenanceState = {
+  enabled: boolean;
+  message: string | null;
+  updatedAt: string | null;
+};
+
+export type SystemAuthorityState = {
+  maintenance: MaintenanceState;
+};
+
 type AuthDatabase = {
   version: 1;
   revision: number;
@@ -89,6 +113,7 @@ type AuthDatabase = {
   files: StoredFile[];
   folders: StoredFolder[];
   albums?: StoredAlbum[];
+  system?: SystemAuthorityState;
 };
 
 type TelegramResponse<T> = { ok: true; result: T } | { ok: false; description?: string };
@@ -109,6 +134,12 @@ export class AccountStoreError extends Error {
   }
 }
 
+function defaultSystemAuthorityState(): SystemAuthorityState {
+  return {
+    maintenance: { enabled: false, message: null, updatedAt: null },
+  };
+}
+
 function emptyDatabase(): AuthDatabase {
   return {
     version: 1,
@@ -118,6 +149,7 @@ function emptyDatabase(): AuthDatabase {
     files: [],
     folders: [],
     albums: [],
+    system: defaultSystemAuthorityState(),
   };
 }
 
@@ -132,7 +164,10 @@ function isStoredUser(value: unknown): value is StoredUser {
     typeof user.passwordSalt === "string" &&
     typeof user.createdAt === "string" &&
     (typeof user.lastLoginAt === "string" || user.lastLoginAt === null) &&
-    (user.role === undefined || user.role === "admin" || user.role === "user")
+    (user.role === undefined || user.role === "admin" || user.role === "user") &&
+    (user.accountStatus === undefined || ["active", "suspended", "banned"].includes(String(user.accountStatus))) &&
+    (user.storageAccess === undefined || user.storageAccess === "enabled" || user.storageAccess === "disabled") &&
+    (user.subscription === undefined || (typeof user.subscription === "object" && user.subscription !== null))
   );
 }
 
@@ -142,6 +177,21 @@ function isStoredUser(value: unknown): value is StoredUser {
  * future database write cannot preserve credentials from the retired mixed
  * Telegram architecture.
  */
+function normalizeSubscription(value: StoredUser["subscription"], fallbackDate: string): StoredSubscription {
+  const tier: SubscriptionTier = value?.tier === "premium" ? "premium" : "free";
+  const status: SubscriptionStatus = ["active", "inactive", "past_due", "cancelled"].includes(String(value?.status))
+    ? (value?.status as SubscriptionStatus)
+    : tier === "free"
+      ? "active"
+      : "inactive";
+  return {
+    tier,
+    status,
+    expiresAt: typeof value?.expiresAt === "string" || value?.expiresAt === null ? value.expiresAt : null,
+    updatedAt: typeof value?.updatedAt === "string" ? value.updatedAt : fallbackDate,
+  };
+}
+
 function isolateStoredUser(user: StoredUser): StoredUser {
   return {
     id: user.id,
@@ -151,7 +201,26 @@ function isolateStoredUser(user: StoredUser): StoredUser {
     passwordSalt: user.passwordSalt,
     createdAt: user.createdAt,
     lastLoginAt: user.lastLoginAt,
-    role: user.role,
+    role: user.role === "admin" ? "admin" : "user",
+    accountStatus: ["active", "suspended", "banned"].includes(String(user.accountStatus))
+      ? user.accountStatus
+      : "active",
+    subscription: normalizeSubscription(user.subscription, user.createdAt),
+    storageAccess: user.storageAccess === "disabled" ? "disabled" : "enabled",
+  };
+}
+
+function normalizeSystemAuthorityState(value: unknown): SystemAuthorityState {
+  if (!value || typeof value !== "object") return defaultSystemAuthorityState();
+  const system = value as { maintenance?: unknown };
+  if (!system.maintenance || typeof system.maintenance !== "object") return defaultSystemAuthorityState();
+  const maintenance = system.maintenance as Record<string, unknown>;
+  return {
+    maintenance: {
+      enabled: maintenance.enabled === true,
+      message: typeof maintenance.message === "string" ? maintenance.message.trim().slice(0, 240) || null : null,
+      updatedAt: typeof maintenance.updatedAt === "string" ? maintenance.updatedAt : null,
+    },
   };
 }
 
@@ -211,6 +280,7 @@ function parseDatabase(raw: string): AuthDatabase {
     files: migrated,
     folders: Array.isArray(db.folders) ? db.folders : [],
     albums: Array.isArray(db.albums) ? db.albums : [],
+    system: normalizeSystemAuthorityState(db.system),
   };
   if (hadLegacyUserCredentials) {
     Object.defineProperty(parsed, LEGACY_USER_CREDENTIALS_REMOVED, { value: true });
@@ -769,6 +839,65 @@ export async function removeFolder(userId: string, folderId: string): Promise<{ 
   });
 }
 
+// ── Backend authority state ──
+
+export async function getSystemAuthorityState(): Promise<SystemAuthorityState> {
+  return serialized(async () => {
+    const database = await load();
+    return normalizeSystemAuthorityState(database.system);
+  });
+}
+
+export async function setMaintenanceState(enabled: boolean, message: string | null): Promise<SystemAuthorityState> {
+  return serialized(async () => {
+    const database = await load();
+    const next: SystemAuthorityState = {
+      maintenance: {
+        enabled,
+        message: typeof message === "string" ? message.trim().slice(0, 240) || null : null,
+        updatedAt: new Date().toISOString(),
+      },
+    };
+    database.system = next;
+    database.revision += 1;
+    database.updatedAt = new Date().toISOString();
+    await save(database);
+    return next;
+  });
+}
+
+export type UserAuthorityPatch = {
+  accountStatus?: AccountStatus;
+  storageAccess?: StorageAccess;
+  subscription?: {
+    tier: SubscriptionTier;
+    status: SubscriptionStatus;
+    expiresAt?: string | null;
+  };
+};
+
+export async function updateUserAuthorityPolicy(userId: string, patch: UserAuthorityPatch): Promise<void> {
+  return serialized(async () => {
+    const database = await load();
+    const user = database.users.find((entry) => entry.id === userId);
+    if (!user) throw new AccountStoreError("User not found.");
+    const now = new Date().toISOString();
+    if (patch.accountStatus) user.accountStatus = patch.accountStatus;
+    if (patch.storageAccess) user.storageAccess = patch.storageAccess;
+    if (patch.subscription) {
+      user.subscription = {
+        tier: patch.subscription.tier,
+        status: patch.subscription.status,
+        expiresAt: patch.subscription.expiresAt ?? null,
+        updatedAt: now,
+      };
+    }
+    database.revision += 1;
+    database.updatedAt = now;
+    await save(database);
+  });
+}
+
 // ── Admin overview ──
 
 export type AdminUserRow = {
@@ -776,6 +905,9 @@ export type AdminUserRow = {
   name: string;
   email: string;
   role: "admin" | "user" | undefined;
+  accountStatus: AccountStatus;
+  storageAccess: StorageAccess;
+  subscription: StoredSubscription;
   createdAt: string;
   lastLoginAt: string | null;
   fileCount: number;
@@ -787,6 +919,7 @@ export type AdminOverview = {
   revision: number;
   updatedAt: string;
   totals: { users: number; files: number; folders: number; bytes: number; images: number; videos: number; documents: number };
+  system: SystemAuthorityState;
   users: AdminUserRow[];
 };
 
@@ -809,6 +942,9 @@ export async function getAdminOverview(): Promise<AdminOverview> {
         name: u.name,
         email: u.email,
         role: u.role,
+        accountStatus: u.accountStatus ?? "active",
+        storageAccess: u.storageAccess ?? "enabled",
+        subscription: normalizeSubscription(u.subscription, u.createdAt),
         createdAt: u.createdAt,
         lastLoginAt: u.lastLoginAt,
         fileCount: owned.length,
@@ -821,6 +957,7 @@ export async function getAdminOverview(): Promise<AdminOverview> {
       revision: database.revision,
       updatedAt: database.updatedAt,
       totals,
+      system: normalizeSystemAuthorityState(database.system),
       users,
     };
   });

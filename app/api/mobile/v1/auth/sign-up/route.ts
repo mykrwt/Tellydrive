@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { assertPublicSignupAllowed, AuthorityError } from "@/lib/backend-authority";
 import {
   createSession,
   normalizeEmail,
@@ -38,10 +39,14 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    await assertPublicSignupAllowed();
     const user = await registerUser(name, email, password);
     await createSession(user.id, true);
     return mobileJson({ user: mobileUser(user) }, { status: 201 });
   } catch (error: unknown) {
+    if (error instanceof AuthorityError) {
+      return mobileJson({ error: error.message, code: error.code }, { status: error.status });
+    }
     console.error("Mobile sign-up failed:", error);
     const message = error instanceof Error ? error.message.toLowerCase() : "";
     if (message.includes("already") || message.includes("exists")) {

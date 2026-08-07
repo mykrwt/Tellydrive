@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth";
+import { authorityErrorPayload, authorizeRequest } from "@/lib/backend-authority";
 import { createFolder, getFilesForUser, getFoldersForUser } from "@/lib/telegram-store";
 import { checkRateLimitWithIp, getRetryAfterSec, rateLimitHeaders } from "@/lib/rate-limit";
 import { cachedFetch, etagMatches, invalidatePrefix } from "@/lib/api-cache";
@@ -20,8 +20,13 @@ const FOLDER_ID_RE = /^[a-zA-Z0-9_-]{6,64}$/;
 
 // GET /api/folders?parentId=<id> | root=1 | all=1
 export async function GET(req: NextRequest) {
-  const user = await getCurrentUser();
-  if (!user) return noStore(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
+  let user;
+  try {
+    user = (await authorizeRequest("storage:read")).user;
+  } catch (error) {
+    const failure = authorityErrorPayload(error);
+    return noStore(NextResponse.json(failure.body, { status: failure.status }));
+  }
 
   const ip = ipFromReq(req);
   let rl: ReturnType<typeof checkRateLimitWithIp> | null = null;
@@ -102,8 +107,13 @@ export async function GET(req: NextRequest) {
 
 // POST /api/folders — { name, parentId }
 export async function POST(req: NextRequest) {
-  const user = await getCurrentUser();
-  if (!user) return noStore(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
+  let user;
+  try {
+    user = (await authorizeRequest("storage:write")).user;
+  } catch (error) {
+    const failure = authorityErrorPayload(error);
+    return noStore(NextResponse.json(failure.body, { status: failure.status }));
+  }
 
   const ip = ipFromReq(req);
   try {

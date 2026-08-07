@@ -1,8 +1,9 @@
 import "server-only";
 
 import { NextRequest, NextResponse } from "next/server";
-import { isAdminUser } from "@/lib/admin";
+import { isAdminIdentity } from "@/lib/server/admin-identity";
 import type { SafeUser } from "@/lib/auth";
+import { resolveAuthorityProfile } from "@/lib/backend-authority";
 import { checkIpRateLimit, getRetryAfterSec, rateLimitHeaders } from "@/lib/rate-limit";
 
 const MAX_JSON_BYTES = 16 * 1024;
@@ -59,13 +60,17 @@ export async function readMobileJson(request: NextRequest): Promise<Record<strin
 }
 
 export function mobileUser(user: SafeUser) {
+  const authority = resolveAuthorityProfile(user);
   return {
     id: user.id,
     name: user.name,
     email: user.email,
     createdAt: user.createdAt,
     lastLoginAt: user.lastLoginAt,
-    role: isAdminUser(user) ? "admin" : "user",
-    isAdmin: isAdminUser(user),
+    role: isAdminIdentity(user) ? "admin" : "user",
+    isAdmin: isAdminIdentity(user),
+    accountStatus: authority.accountStatus,
+    subscription: authority.subscription,
+    entitlements: authority.entitlements,
   };
 }

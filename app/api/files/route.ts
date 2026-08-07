@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth";
+import { authorityErrorPayload, authorizeRequest } from "@/lib/backend-authority";
 import { getFilesPaginated, getFolderById, addFile, type StoredFile } from "@/lib/telegram-store";
 import { uploadToStorage, friendlyStorageError } from "@/lib/telegram-storage";
 import { sanitizeFileName, sanitizeSearchQuery, validateAnyFileType, validateFileType } from "@/lib/validation";
@@ -28,8 +28,13 @@ function ipFromReq(req: NextRequest): string {
 
 // GET /api/files?limit=24&offset=0&search=&mime=image&sortBy=date&sortOrder=desc
 export async function GET(req: NextRequest) {
-  const user = await getCurrentUser();
-  if (!user) return withSecurity(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
+  let user;
+  try {
+    user = (await authorizeRequest("storage:read")).user;
+  } catch (error) {
+    const failure = authorityErrorPayload(error);
+    return withSecurity(NextResponse.json(failure.body, { status: failure.status }));
+  }
 
   const ip = ipFromReq(req);
   let rl: ReturnType<typeof checkRateLimit> | null = null;
@@ -144,8 +149,14 @@ export async function GET(req: NextRequest) {
 
 // POST /api/files — multipart form-data with files[]
 export async function POST(req: NextRequest) {
-  const user = await getCurrentUser();
-  if (!user) return withSecurity(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
+  let principal;
+  try {
+    principal = await authorizeRequest("storage:upload");
+  } catch (error) {
+    const failure = authorityErrorPayload(error);
+    return withSecurity(NextResponse.json(failure.body, { status: failure.status }));
+  }
+  const user = principal.user;
 
   const ip = ipFromReq(req);
   try {
@@ -207,18 +218,25 @@ export async function POST(req: NextRequest) {
     const folder = await getFolderById(user.id, folderId);
     if (!folder) return withSecurity(NextResponse.json({ error: "Target folder not found" }, { status: 404 }));
   }
-  const allowAny = form.get("allowAny") === "1";
   const sourceRaw = form.get("source");
-  const source =
-    sourceRaw === "gallery" || sourceRaw === "files" || sourceRaw === "admin"
-      ? (sourceRaw as "gallery" | "files" | "admin")
-      : allowAny || folderId
+  if (sourceRaw === "admin" && !principal.isAdmin) {
+    return withSecurity(NextResponse.json({ error: "Forbidden" }, { status: 403 }));
+  }
+  // The client may request a UI section, but the backend maps it to an allowed
+  // scope and derives file-type permissions. `allowAny` is intentionally ignored.
+  const source: "gallery" | "files" | "admin" =
+    sourceRaw === "admin" && principal.isAdmin
+      ? "admin"
+      : sourceRaw === "files" || folderId
         ? "files"
         : "gallery";
+  const allowAny = source !== "gallery";
   const typeCheck = allowAny ? validateAnyFileType : validateFileType;
 
   for (const f of allFiles) {
-    if (f.size > 2 * 1024 * 1024 * 1024) return withSecurity(NextResponse.json({ error: "File too large" }, { status: 400 }));
+    if (f.size > principal.authority.entitlements.maxUploadBytes) {
+      return withSecurity(NextResponse.json({ error: "File too large" }, { status: 400 }));
+    }
     try {
       sanitizeFileName(f.name);
     } catch {

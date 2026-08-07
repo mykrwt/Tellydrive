@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { AuthPage } from "@/components/auth-page";
-import { getSessionUserId } from "@/lib/auth";
+import { authorizeRequest } from "@/lib/backend-authority";
 
 export const metadata = { title: "Create account" };
 
@@ -13,8 +13,17 @@ export default async function SignUpPage({
   const initialError =
     params?.error === "store"
       ? "The account service is temporarily unavailable. Please try again later."
-      : params?.error;
+      : params?.error === "access"
+        ? "The backend has restricted access to this account or is in maintenance mode."
+        : params?.error;
 
-  if (await getSessionUserId()) redirect("/dashboard");
+  let approved = false;
+  try {
+    await authorizeRequest("account:read");
+    approved = true;
+  } catch {
+    // Never infer authority from the presence of a local cookie.
+  }
+  if (approved) redirect("/dashboard");
   return <AuthPage mode="signup" initialError={initialError} />;
 }

@@ -6,10 +6,7 @@ class UploadRequest {
     required this.mimeType,
     required this.source,
     this.folderId,
-    this.allowAny = true,
   });
-
-  final bool allowAny;
   final String? folderId;
   final String mimeType;
   final String name;

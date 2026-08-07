@@ -204,7 +204,8 @@ class StorageRemoteDataSource {
           'count': count,
           'size': request.size,
           'mimeType': request.mimeType,
-          'allowAny': request.allowAny ? '1' : '0',
+          'source': request.source,
+          'folderId': request.folderId ?? '',
           'uploadId': uploadId,
         });
         final partStart = completedBytes;
@@ -243,15 +244,9 @@ class StorageRemoteDataSource {
 
     final finalized = await _client.postJson(
       '/api/files/finalize',
-      data: <String, Object?>{
-        'name': request.name,
-        'size': request.size,
-        'mimeType': request.mimeType,
+      data: <String, Object>{
         'uploadId': uploadId,
         'parts': tokens,
-        'folderId': request.folderId,
-        'allowAny': request.allowAny,
-        'source': request.source,
       },
     );
     final id = finalized['id'];

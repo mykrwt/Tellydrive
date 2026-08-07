@@ -17,11 +17,22 @@ const COOKIE_NAME = "tellydrive_session";
 const LEGACY_COOKIE_NAME = "tellybase_session";
 
 type SessionPayload = { sub: string; exp: number };
-export type SafeUser = Pick<StoredUser, "id" | "name" | "email" | "createdAt" | "lastLoginAt" | "role">;
+export type SafeUser = Pick<
+  StoredUser,
+  | "id"
+  | "name"
+  | "email"
+  | "createdAt"
+  | "lastLoginAt"
+  | "role"
+  | "accountStatus"
+  | "subscription"
+  | "storageAccess"
+>;
 
 function safeUser(user: StoredUser): SafeUser {
-  const { id, name, email, createdAt, lastLoginAt, role } = user;
-  return { id, name, email, createdAt, lastLoginAt, role };
+  const { id, name, email, createdAt, lastLoginAt, role, accountStatus, subscription, storageAccess } = user;
+  return { id, name, email, createdAt, lastLoginAt, role, accountStatus, subscription, storageAccess };
 }
 
 export function normalizeEmail(value: string): string {
@@ -171,6 +182,15 @@ export async function registerUser(name: string, email: string, password: string
     passwordSalt: passwordData.salt,
     createdAt: now,
     lastLoginAt: now,
+    role: "user",
+    accountStatus: "active",
+    subscription: {
+      tier: "free",
+      status: "active",
+      expiresAt: null,
+      updatedAt: now,
+    },
+    storageAccess: "enabled",
   };
   await createUser(user);
   return safeUser(user);

@@ -419,10 +419,16 @@ export async function sendPartToStorage(
 export type PartTokenPayload = {
   sub: string; // user id the part was uploaded by
   uploadId: string; // groups the parts of one file
+  name: string;
+  mimeType: string;
+  totalSize: number;
+  partCount: number;
   fileId: string;
   messageId: number;
   size: number;
   order: number;
+  source: "gallery" | "files" | "admin";
+  folderId: string | null;
   exp: number; // epoch seconds
 };
 
@@ -485,10 +491,16 @@ export function verifyPartToken(token: unknown): PartTokenPayload | null {
     if (
       typeof payload.sub !== "string" ||
       typeof payload.uploadId !== "string" ||
+      typeof payload.name !== "string" ||
+      typeof payload.mimeType !== "string" ||
+      typeof payload.totalSize !== "number" ||
+      typeof payload.partCount !== "number" ||
       typeof payload.fileId !== "string" ||
       typeof payload.messageId !== "number" ||
       typeof payload.size !== "number" ||
       typeof payload.order !== "number" ||
+      !["gallery", "files", "admin"].includes(payload.source) ||
+      !(typeof payload.folderId === "string" || payload.folderId === null) ||
       typeof payload.exp !== "number"
     ) {
       return null;

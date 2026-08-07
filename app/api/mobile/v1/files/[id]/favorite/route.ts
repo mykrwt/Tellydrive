@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { getCurrentUser } from "@/lib/auth";
+import { authorityErrorPayload, authorizeRequest } from "@/lib/backend-authority";
 import { checkRateLimitWithIp } from "@/lib/rate-limit";
 import { getFileById, updateFile } from "@/lib/telegram-store";
 import { invalidatePrefix } from "@/lib/api-cache";
@@ -11,16 +11,20 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const user = await getCurrentUser();
-  if (!user) return mobileJson({ error: "Unauthorized" }, { status: 401 });
+  let user;
   try {
+    user = (await authorizeRequest("storage:write")).user;
     checkRateLimitWithIp(user.id, requestIp(request), "folder");
-  } catch {
-    return mobileJson({ error: "Too many requests. Try again soon." }, { status: 429 });
+  } catch (error) {
+    if ((error as { status?: number }).status === 429) {
+      return mobileJson({ error: "Too many requests. Try again soon." }, { status: 429 });
+    }
+    const failure = authorityErrorPayload(error);
+    return mobileJson(failure.body, { status: failure.status });
   }
+
   const { id } = await params;
   if (!ID.test(id)) return mobileJson({ error: "Invalid id" }, { status: 400 });
-
   const body = await readMobileJson(request);
   if (!body || typeof body.favorite !== "boolean") {
     return mobileJson({ error: "favorite must be a boolean" }, { status: 400 });

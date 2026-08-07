@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getCurrentUser } from "@/lib/auth";
+import { authorizeRequest } from "@/lib/backend-authority";
 import { findUserById, getFilesForUser } from "@/lib/telegram-store";
 import { isAdminUser } from "@/lib/admin";
 import { Gallery } from "@/components/gallery";
@@ -15,11 +15,11 @@ export default async function DashboardPage({
 }) {
   let safeUser;
   try {
-    safeUser = await getCurrentUser();
-  } catch {
-    redirect("/sign-in?error=store");
+    safeUser = (await authorizeRequest("storage:read")).user;
+  } catch (error) {
+    const status = (error as { status?: number }).status;
+    redirect(status === 401 ? "/sign-in" : "/sign-in?error=access");
   }
-  if (!safeUser) redirect("/sign-in");
 
   const params = await searchParams;
   const query = typeof params.search === "string" ? params.search.trim().slice(0, 120) : "";

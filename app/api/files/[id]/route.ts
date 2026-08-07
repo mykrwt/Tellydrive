@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth";
+import { authorityErrorPayload, authorizeRequest } from "@/lib/backend-authority";
 import { getFileById, getFolderById, removeFile, updateFile } from "@/lib/telegram-store";
 import {
   resolvePrivateChunkUrls,
@@ -94,13 +94,17 @@ async function proxySingleFile(
 // GET /api/files/[id] — metadata or a backend-proxied byte stream.
 // System A URLs and Telegram storage IDs are never returned or redirected to.
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const user = await getCurrentUser();
-  if (!user) return noStore(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
-
   const { searchParams } = new URL(req.url);
   const download = searchParams.get("download") === "1";
   const thumbnail = searchParams.get("thumbnail") === "1";
   const inline = thumbnail || searchParams.get("inline") === "1";
+  let user;
+  try {
+    user = (await authorizeRequest(download || thumbnail ? "storage:download" : "storage:read")).user;
+  } catch (error) {
+    const failure = authorityErrorPayload(error);
+    return noStore(NextResponse.json(failure.body, { status: failure.status }));
+  }
 
   // proxy/redirect remain accepted for backward compatibility but cannot alter
   // the invariant that bytes always pass through this authenticated backend.
@@ -209,8 +213,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 // PATCH /api/files/[id] — rename and/or move a file: { name?, folderId? }
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const user = await getCurrentUser();
-  if (!user) return noStore(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
+  let user;
+  try {
+    user = (await authorizeRequest("storage:write")).user;
+  } catch (error) {
+    const failure = authorityErrorPayload(error);
+    return noStore(NextResponse.json(failure.body, { status: failure.status }));
+  }
 
   const ip = req.headers.get("cf-connecting-ip") || req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
   try {
@@ -293,8 +302,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const user = await getCurrentUser();
-  if (!user) return noStore(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
+  let user;
+  try {
+    user = (await authorizeRequest("storage:write")).user;
+  } catch (error) {
+    const failure = authorityErrorPayload(error);
+    return noStore(NextResponse.json(failure.body, { status: failure.status }));
+  }
   const delIp = req.headers.get("cf-connecting-ip") || req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
   try {
     checkRateLimitWithIp(user.id, delIp, "delete");

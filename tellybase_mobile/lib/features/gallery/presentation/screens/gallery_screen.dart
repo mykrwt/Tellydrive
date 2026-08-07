@@ -376,7 +376,6 @@ class _GalleryScreenState extends ConsumerState<GalleryScreen> {
     final task = ref.read(uploadControllerProvider.notifier).uploadFiles(
           result.files,
           source: 'gallery',
-          allowAny: false,
         );
     unawaited(UploadQueueSheet.show(context));
     final completed = await task;

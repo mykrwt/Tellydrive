@@ -121,26 +121,20 @@ export async function proxy(req: NextRequest) {
   }
 
   // Auth gating
-  const isAuthPage = pathname === "/sign-in" || pathname === "/sign-up" || pathname === "/sign-in-flow";
   const isProtected = pathname === "/dashboard" || pathname.startsWith("/dashboard/");
 
-  if (isAuthPage || isProtected) {
+  if (isProtected) {
     const cookie = req.cookies.get(COOKIE_NAME)?.value || req.cookies.get(LEGACY_COOKIE_NAME)?.value;
-    const valid = await verifySessionCookie(cookie);
-    if (isProtected && !valid) {
+    const cryptographicallyValid = await verifySessionCookie(cookie);
+    if (!cryptographicallyValid) {
       const url = req.nextUrl.clone();
       url.pathname = "/sign-in";
       url.search = "";
       const res = NextResponse.redirect(url);
       return applySecurityHeaders(res);
     }
-    if (isAuthPage && valid) {
-      const url = req.nextUrl.clone();
-      url.pathname = "/dashboard";
-      url.search = "";
-      const res = NextResponse.redirect(url);
-      return applySecurityHeaders(res);
-    }
+    // This is only an inexpensive signature prefilter. The server page still
+    // re-evaluates account, maintenance, storage, subscription, and ban policy.
   }
 
   const res = NextResponse.next();

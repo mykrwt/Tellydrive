@@ -14,6 +14,11 @@ import {
   recordLoginAttempt,
 } from "@/lib/auth";
 import { checkIpRateLimit, getRetryAfterSec } from "@/lib/rate-limit";
+import {
+  assertIdentityCanStartSession,
+  assertPublicSignupAllowed,
+  AuthorityError,
+} from "@/lib/backend-authority";
 import { AccountStoreError } from "@/lib/telegram-store";
 
 export type AuthState = { error?: string; success?: boolean };
@@ -77,6 +82,13 @@ export async function signIn(_state: AuthState, formData: FormData): Promise<Aut
     return { error: "Email or password is incorrect." };
   }
 
+  try {
+    await assertIdentityCanStartSession(user);
+  } catch (error) {
+    recordLoginAttempt(key, false);
+    return { error: error instanceof AuthorityError ? error.message : "Sign in is temporarily unavailable." };
+  }
+
   recordLoginAttempt(key, true);
   await createSession(user.id, remember);
   redirect("/dashboard");
@@ -104,6 +116,7 @@ export async function signUp(_state: AuthState, formData: FormData): Promise<Aut
 
   let user;
   try {
+    await assertPublicSignupAllowed();
     user = await registerUser(name, email, password);
   } catch (error) {
     recordLoginAttempt(key, false);

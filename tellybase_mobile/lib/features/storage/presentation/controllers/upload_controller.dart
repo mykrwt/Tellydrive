@@ -56,7 +56,6 @@ class UploadController extends StateNotifier<List<UploadItem>> {
   Future<int> uploadFiles(
     List<PlatformFile> files, {
     required String source,
-    required bool allowAny,
     String? folderId,
   }) async {
     final entries = files
@@ -94,7 +93,6 @@ class UploadController extends StateNotifier<List<UploadItem>> {
             mimeType: lookupMimeType(file.name) ?? 'application/octet-stream',
             source: source,
             folderId: folderId,
-            allowAny: allowAny,
           ),
           onProgress: (progress) => _update(
             item.id,

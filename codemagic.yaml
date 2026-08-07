@@ -4,6 +4,7 @@ workflows:
 
     environment:
       flutter: stable
+      java: 17
       groups:
         - tellybase_secrets
 

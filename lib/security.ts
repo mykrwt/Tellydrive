@@ -10,14 +10,13 @@ export function getClientIp(req: NextRequest | Request): string {
   if (xff) return xff.split(",")[0]?.trim() || "unknown";
   const real = h.get("x-real-ip");
   if (real) return real.trim();
-  // @ts-ignore NextRequest may have ip
   const maybe = (req as unknown as { ip?: string }).ip;
   if (maybe) return maybe;
   return "unknown";
 }
 
 export function buildCsp(): string {
-  // Strict CSP that still allows Next.js, Tailwind inline styles, Google Fonts, Telegram CDN
+  // Strict CSP: browser media/network access stays same-origin
   // Next.js requires 'unsafe-inline' for styles and 'unsafe-eval' is avoided.
   const parts = [
     "default-src 'self'",
@@ -25,10 +24,10 @@ export function buildCsp(): string {
     "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com data:",
-    // Images: allow telegram cdn (api.telegram.org/file) + blob:data for previews
-    "img-src 'self' data: blob: https: http:",
-    "media-src 'self' blob: https: http:",
-    "connect-src 'self' https://api.telegram.org https://*.telegram.org blob:",
+    // Media is always delivered through authenticated same-origin backend proxies.
+    "img-src 'self' data: blob:",
+    "media-src 'self' blob:",
+    "connect-src 'self' blob:",
     "worker-src 'self' blob:",
     "object-src 'none'",
     "base-uri 'self'",

@@ -17,14 +17,15 @@ export type DashboardSummary = {
     createdAt: string;
     createdLabel: string;
   } | null;
-  storageMode: "telegram" | "local" | "unconfigured";
+  storageMode: "private" | "unavailable";
   storageModeLabel: string;
 };
 
-function modeLabel(mode: DashboardSummary["storageMode"]): string {
-  if (mode === "telegram") return "Telegram storage";
-  if (mode === "local") return "Local development storage";
-  return "Storage not configured";
+function publicStorageState(mode: ReturnType<typeof databaseMode>): Pick<DashboardSummary, "storageMode" | "storageModeLabel"> {
+  if (mode === "unconfigured") {
+    return { storageMode: "unavailable", storageModeLabel: "Private storage unavailable" };
+  }
+  return { storageMode: "private", storageModeLabel: "Private cloud storage" };
 }
 
 function calculateStoragePercent(bytes: number) {
@@ -46,6 +47,7 @@ export async function getDashboardSummary(userId: string): Promise<DashboardSumm
   const storageUsedBytes = files.reduce((sum, file) => sum + (file.size || 0), 0);
   const recent = latestByDate(files);
   const mode = databaseMode();
+  const publicState = publicStorageState(mode);
 
   return {
     storageUsedBytes,
@@ -63,7 +65,7 @@ export async function getDashboardSummary(userId: string): Promise<DashboardSumm
           createdLabel: formatDate(recent.createdAt),
         }
       : null,
-    storageMode: mode,
-    storageModeLabel: modeLabel(mode),
+    storageMode: publicState.storageMode,
+    storageModeLabel: publicState.storageModeLabel,
   };
 }

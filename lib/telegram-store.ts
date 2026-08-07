@@ -3,6 +3,10 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  adminTelegramDatabaseMode,
+  getAdminAccountTelegramConfig,
+} from "@/lib/server/admin-telegram-config";
 
 export type StoredUser = {
   id: string;
@@ -12,11 +16,9 @@ export type StoredUser = {
   passwordSalt: string;
   createdAt: string;
   lastLoginAt: string | null;
-  // Role: "admin" grants access to the Admin page and tools
+  // Role is assigned only by backend authorization policy.
+  // A System B user Telegram identity can never grant or modify this field.
   role?: "admin" | "user";
-  // Kept for backward compat; UI hidden via feature flag
-  telegramToken?: string;
-  telegramChatId?: string;
 };
 
 // Future-ready extensible file type
@@ -96,6 +98,8 @@ type TelegramDocumentMessage = { document?: { file_id?: string }; message_id?: n
 
 const POINTER = /TBAUTH:([A-Za-z0-9_-]+)/;
 const MAX_DATABASE_BYTES = 5 * 1024 * 1024;
+const LEGACY_USER_CREDENTIALS_REMOVED = Symbol("legacy-user-credentials-removed");
+type InternalAuthDatabase = AuthDatabase & { [LEGACY_USER_CREDENTIALS_REMOVED]?: boolean };
 let queue: Promise<unknown> = Promise.resolve();
 
 export class AccountStoreError extends Error {
@@ -128,10 +132,27 @@ function isStoredUser(value: unknown): value is StoredUser {
     typeof user.passwordSalt === "string" &&
     typeof user.createdAt === "string" &&
     (typeof user.lastLoginAt === "string" || user.lastLoginAt === null) &&
-    (user.role === undefined || user.role === "admin" || user.role === "user") &&
-    (user.telegramToken === undefined || typeof user.telegramToken === "string") &&
-    (user.telegramChatId === undefined || typeof user.telegramChatId === "string")
+    (user.role === undefined || user.role === "admin" || user.role === "user")
   );
+}
+
+/**
+ * Allow old records to load, but retain only the account fields used by the
+ * application. This actively strips legacy per-user bot tokens/chat IDs so a
+ * future database write cannot preserve credentials from the retired mixed
+ * Telegram architecture.
+ */
+function isolateStoredUser(user: StoredUser): StoredUser {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    passwordHash: user.passwordHash,
+    passwordSalt: user.passwordSalt,
+    createdAt: user.createdAt,
+    lastLoginAt: user.lastLoginAt,
+    role: user.role,
+  };
 }
 
 function isStoredFile(value: unknown): value is StoredFile {
@@ -178,59 +199,31 @@ function parseDatabase(raw: string): AuthDatabase {
       version: (rec.version as number) ?? 1,
     };
   });
-  return {
+  const hadLegacyUserCredentials = db.users.some((user) => {
+    const record = user as unknown as Record<string, unknown>;
+    return Object.hasOwn(record, "telegramToken") || Object.hasOwn(record, "telegramChatId");
+  });
+  const parsed: InternalAuthDatabase = {
     version: 1,
     revision: Number.isInteger(db.revision) ? Number(db.revision) : 0,
     updatedAt: typeof db.updatedAt === "string" ? db.updatedAt : new Date().toISOString(),
-    users: db.users,
+    users: db.users.map(isolateStoredUser),
     files: migrated,
     folders: Array.isArray(db.folders) ? db.folders : [],
     albums: Array.isArray(db.albums) ? db.albums : [],
   };
-}
-
-function telegramConfig() {
-  let token = process.env.TELEGRAM_BOT_TOKEN?.trim() ?? "";
-  if (token.startsWith("bot")) token = token.slice(3);
-  token = token.replace(/^[\"']|[\"']$/g, "").trim();
-  let chatId = process.env.TELEGRAM_CHAT_ID?.trim() ?? "";
-  chatId = chatId.replace(/^[\"']|[\"']$/g, "").trim();
-  return {
-    token,
-    chatId,
-    apiBase: (process.env.TELEGRAM_API_BASE ?? "https://api.telegram.org").replace(/\/$/, ""),
-  };
-}
-
-export function storageConfig() {
-  const base = telegramConfig();
-  let storageChatId = process.env.TELEGRAM_STORAGE_CHAT_ID?.trim() ?? "";
-  storageChatId = storageChatId.replace(/^[\"']|[\"']$/g, "").trim();
-  let storageToken = process.env.TELEGRAM_STORAGE_BOT_TOKEN?.trim() ?? "";
-  if (storageToken.startsWith("bot")) storageToken = storageToken.slice(3);
-  storageToken = storageToken.replace(/^[\"']|[\"']$/g, "").trim();
-  return {
-    token: storageToken || base.token,
-    chatId: storageChatId || base.chatId,
-    apiBase: base.apiBase,
-    isSeparate: Boolean(storageChatId),
-  };
+  if (hadLegacyUserCredentials) {
+    Object.defineProperty(parsed, LEGACY_USER_CREDENTIALS_REMOVED, { value: true });
+  }
+  return parsed;
 }
 
 export function databaseMode(): "telegram" | "local" | "unconfigured" {
-  const { token, chatId } = telegramConfig();
-  if (token && chatId) return "telegram";
-  return process.env.NODE_ENV === "production" ? "unconfigured" : "local";
-}
-
-export function isTelegramSetupEnabled(): boolean {
-  // Feature flag: hide telegram config UI unless explicitly enabled
-  // NEXT_PUBLIC_ENABLE_TELEGRAM_SETUP=true to show
-  return process.env.NEXT_PUBLIC_ENABLE_TELEGRAM_SETUP === "true";
+  return adminTelegramDatabaseMode();
 }
 
 async function telegramApi<T>(method: string, body: Record<string, unknown>): Promise<T> {
-  const { token, apiBase } = telegramConfig();
+  const { token, apiBase } = getAdminAccountTelegramConfig();
   if (!token) throw new AccountStoreError("TELEGRAM_BOT_TOKEN is missing.", true);
 
   let response: Response;
@@ -263,7 +256,7 @@ async function telegramApi<T>(method: string, body: Record<string, unknown>): Pr
 }
 
 async function loadTelegram(): Promise<AuthDatabase> {
-  const { token, chatId, apiBase } = telegramConfig();
+  const { token, chatId, apiBase } = getAdminAccountTelegramConfig();
   if (!chatId) throw new AccountStoreError("TELEGRAM_CHAT_ID is missing.", true);
   const chat = await telegramApi<TelegramChat>("getChat", { chat_id: chatId });
   const fileId = chat.description?.match(POINTER)?.[1];
@@ -285,7 +278,7 @@ async function loadTelegram(): Promise<AuthDatabase> {
 }
 
 async function saveTelegram(database: AuthDatabase): Promise<void> {
-  const { token, chatId, apiBase } = telegramConfig();
+  const { token, chatId, apiBase } = getAdminAccountTelegramConfig();
   if (!token || !chatId) throw new AccountStoreError("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is missing.", true);
   const serialized = JSON.stringify(database, null, 2);
   const form = new FormData();
@@ -362,7 +355,16 @@ async function load(): Promise<AuthDatabase> {
   if (dbCache && dbCache.expiresAt > Date.now()) return dbCache.db;
   if (dbLoadPromise) return dbLoadPromise;
   dbLoadPromise = loadUncached()
-    .then((db) => {
+    .then(async (db) => {
+      const internal = db as InternalAuthDatabase;
+      if (internal[LEGACY_USER_CREDENTIALS_REMOVED]) {
+        // Fail closed: persist the scrubbed record before serving it so legacy
+        // System B bot credentials cannot remain mixed into System A storage.
+        db.revision += 1;
+        db.updatedAt = new Date().toISOString();
+        if (databaseMode() === "telegram") await saveTelegram(db);
+        else await saveLocal(db);
+      }
       dbCache = { db, expiresAt: Date.now() + DB_CACHE_TTL_MS };
       return db;
     })
@@ -425,22 +427,6 @@ export async function markLogin(id: string): Promise<void> {
     await save(database);
   });
 }
-export async function updateUserSettings(
-  userId: string,
-  updates: { telegramToken?: string; telegramChatId?: string }
-): Promise<void> {
-  return serialized(async () => {
-    const database = await load();
-    const user = database.users.find((entry) => entry.id === userId);
-    if (!user) throw new Error("User not found");
-    if (updates.telegramToken !== undefined) user.telegramToken = updates.telegramToken;
-    if (updates.telegramChatId !== undefined) user.telegramChatId = updates.telegramChatId;
-    database.revision += 1;
-    database.updatedAt = new Date().toISOString();
-    await save(database);
-  });
-}
-
 // ── File operations with owner isolation ──
 
 export type FileQuery = {
@@ -850,29 +836,4 @@ export async function setUserRole(userId: string, role: "admin" | "user"): Promi
     database.updatedAt = new Date().toISOString();
     await save(database);
   });
-}
-
-// ── Backward compat wrappers ──
-export async function uploadToTelegram(
-  name: string,
-  blob: Blob,
-  userConfig?: { token: string; chatId: string }
-): Promise<{ fileId: string; messageId?: number }> {
-  // Deprecated: use lib/telegram-storage uploadToStorage instead
-  // Keep for existing server actions that still call it
-  const { uploadToStorage } = await import("./telegram-storage");
-  const res = await uploadToStorage(name, blob, {
-    userToken: userConfig?.token,
-    userChatId: userConfig?.chatId,
-  });
-  return { fileId: res.fileId, messageId: res.messageId };
-}
-
-export async function getTelegramFileUrl(fileId: string, userConfig?: { token: string }): Promise<string> {
-  if (fileId.startsWith("local:")) {
-    const id = fileId.slice(6);
-    return `/api/local-file?id=${encodeURIComponent(id)}`;
-  }
-  const { getStorageFileUrl } = await import("./telegram-storage");
-  return getStorageFileUrl(fileId, userConfig?.token);
 }

@@ -1,4 +1,5 @@
 import { NextResponse, NextRequest } from "next/server";
+import { getServerSessionSigningSecret } from "@/lib/server/admin-telegram-config";
 
 // Lightweight session check without importing server-only auth (decode here)
 // We duplicate minimal HMAC verify to keep middleware edge-compatible.
@@ -7,18 +8,13 @@ const COOKIE_NAME = "tellydrive_session";
 const LEGACY_COOKIE_NAME = "tellybase_session";
 
 function sessionSecret(): string {
-  return (
-    process.env.SESSION_SECRET ||
-    process.env.TELEGRAM_BOT_TOKEN ||
-    (process.env.NODE_ENV !== "production" ? "tellybase-local-development-session-key" : "")
-  );
+  return getServerSessionSigningSecret();
 }
 
 // Very small base64url decode helper
 function b64urlToBytes(s: string): Uint8Array {
   // Node/Edge have atob? Use Buffer where available, fallback
   try {
-    // @ts-ignore
     if (typeof Buffer !== "undefined") return Buffer.from(s, "base64url");
   } catch {}
   // Edge fallback via atob
@@ -70,9 +66,9 @@ function cspHeader(): string {
     "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com data:",
-    "img-src 'self' data: blob: https: http:",
-    "media-src 'self' blob: https: http:",
-    "connect-src 'self' https://api.telegram.org https://*.telegram.org blob:",
+    "img-src 'self' data: blob:",
+    "media-src 'self' blob:",
+    "connect-src 'self' blob:",
     "worker-src 'self' blob:",
     "object-src 'none'",
     "base-uri 'self'",
@@ -105,7 +101,6 @@ export async function proxy(req: NextRequest) {
   // Apply CSRF check for state-changing API routes: require same-origin
   if (pathname.startsWith("/api/") && !["GET", "HEAD", "OPTIONS"].includes(method)) {
     const origin = req.headers.get("origin");
-    const referer = req.headers.get("referer");
     const host = req.headers.get("host");
     const forwardedHost = req.headers.get("x-forwarded-host") || host;
     const check = (urlStr: string | null): boolean => {
@@ -117,8 +112,7 @@ export async function proxy(req: NextRequest) {
         return false;
       }
     };
-    const sameOrigin = (origin && check(origin)) || (!origin && referer && check(referer));
-    // Allow same-origin or no-origin for server actions that use fetch with sameSite cookie; but enforce if origin present and mismatched
+    // Allow no-origin native/server calls; reject any explicitly cross-origin browser call.
     if (origin && !check(origin)) {
       const res = NextResponse.json({ error: "Forbidden — cross-origin request blocked" }, { status: 403 });
       return applySecurityHeaders(res);

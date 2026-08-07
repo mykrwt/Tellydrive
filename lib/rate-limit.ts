@@ -101,6 +101,9 @@ export const limits = {
   // Auth: 8/min per IP, stricter per IP+email
   auth: { limit: 8, windowMs: 10 * 60_000 },
   authStrict: { limit: 5, windowMs: 15 * 60_000 },
+  // Privileged administrative reads/writes always have backend rate limits.
+  adminRead: { limit: 60, windowMs: 60_000 },
+  adminWrite: { limit: 20, windowMs: 60_000 },
   // Global API fallback per IP: 200/min
   apiIp: { limit: 200, windowMs: 60_000 },
 };

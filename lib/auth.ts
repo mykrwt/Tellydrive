@@ -10,6 +10,7 @@ import {
   markLogin,
   type StoredUser,
 } from "@/lib/telegram-store";
+import { getServerSessionSigningSecret } from "@/lib/server/admin-telegram-config";
 
 const scrypt = promisify(scryptCallback);
 const COOKIE_NAME = "tellydrive_session";
@@ -60,10 +61,7 @@ async function verifyPassword(password: string, salt: string, expected: string):
 }
 
 function sessionSecret(): string {
-  const secret =
-    process.env.SESSION_SECRET ||
-    process.env.TELEGRAM_BOT_TOKEN ||
-    (process.env.NODE_ENV !== "production" ? "tellybase-local-development-session-key" : "");
+  const secret = getServerSessionSigningSecret();
   if (!secret && process.env.NODE_ENV === "production") {
     throw new Error("SESSION_SECRET is not configured — set a strong random value (openssl rand -base64 32).");
   }
@@ -116,7 +114,7 @@ function cleanupAttempts() {
     if (v.resetAt < now && (!v.lockedUntil || v.lockedUntil < now)) loginAttempts.delete(k);
   }
 }
-export function checkLoginRateLimit(key: string, maxAttempts = 10, windowMs = 15 * 60 * 1000): { allowed: boolean; retryAfterSec?: number } {
+export function checkLoginRateLimit(key: string, maxAttempts = 10): { allowed: boolean; retryAfterSec?: number } {
   cleanupAttempts();
   const now = Date.now();
   const entry = loginAttempts.get(key);

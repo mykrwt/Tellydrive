@@ -1,7 +1,6 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { headers } from "next/headers";
 import {
   authenticateUser,
   createSession,
@@ -19,42 +18,16 @@ import { AccountStoreError } from "@/lib/telegram-store";
 
 export type AuthState = { error?: string; success?: boolean };
 
-function formatTelegramError(message: string): string {
-  const lower = message.toLowerCase();
-
-  if (lower.includes("chat not found")) {
-    return `${message}. Check TELEGRAM_CHAT_ID (channel/supergroup IDs usually start with -100) and ensure the bot is added to the chat.`;
-  }
-  if (
-    lower.includes("not enough rights") ||
-    lower.includes("chat_admin_required") ||
-    lower.includes("administrator rights")
-  ) {
-    return `${message}. Make sure the bot is an administrator with permission to edit chat info ("Change Channel Info" or "Change Group Info").`;
-  }
-  if (
-    lower.includes("unauthorized") ||
-    lower.includes("invalid token") ||
-    lower.includes("bot_token_invalid")
-  ) {
-    return `${message}. Check TELEGRAM_BOT_TOKEN for typos or formatting issues.`;
-  }
-  if (lower.includes("supergroups and channels")) {
-    return `${message}. TellyDrive requires a private channel or supergroup, not a basic group.`;
-  }
-  if (lower.includes("bot was blocked") || lower.includes("not a member")) {
-    return `${message}. Ensure the bot is added to your channel or supergroup as an administrator.`;
-  }
-  return message;
-}
-
 function storeMessage(error: unknown): string {
+  // Operational details belong to System A logs only. Never send Telegram API
+  // failures, channel configuration, IDs, or credential hints to a user.
   console.error("Authentication store error:", error);
-  if (error instanceof AccountStoreError) {
-    return formatTelegramError(error.message);
-  }
-  if (error instanceof Error && error.message) {
-    return formatTelegramError(error.message);
+  if (
+    error instanceof AccountStoreError &&
+    !error.setupProblem &&
+    error.message.toLowerCase().includes("already exists")
+  ) {
+    return "An account with that email already exists.";
   }
   return "The account service is temporarily unavailable. Please try again.";
 }
@@ -72,7 +45,7 @@ async function enforceAuthRateLimit(email?: string): Promise<string | null> {
   // Per-IP+email stricter
   if (email) {
     const key = `${ip}:${normalizeEmail(email)}`;
-    const res = checkLoginRateLimit(key, 5, 15 * 60 * 1000);
+    const res = checkLoginRateLimit(key, 5);
     if (!res.allowed) return `Too many attempts for this email. Try again in ${res.retryAfterSec ?? 60}s.`;
   }
   return null;

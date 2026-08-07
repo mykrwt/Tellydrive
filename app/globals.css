@@ -107,8 +107,6 @@ dl > div:last-child { border: 0; }
 dt { color: #68757d; font-size: 11px; }
 dd { margin: 0; color: #cbd4da; font-size: 12px; }
 .storage-card { padding: 28px; background: linear-gradient(145deg, rgba(18,43,54,.7), rgba(14,19,22,.9)); }
-.telegram-badge { width: 45px; height: 45px; display: grid; place-items: center; margin-bottom: 30px; border-radius: 13px; background: #35aee5; box-shadow: 0 12px 30px rgba(53,174,229,.18); }
-.telegram-badge svg { width: 25px; fill: white; }
 .storage-card h2 { margin: 0 0 10px; font-family: Manrope, sans-serif; font-size: 21px; letter-spacing: -.03em; }
 .storage-card > p:not(.eyebrow) { color: #7d8c94; font-size: 11px; line-height: 1.65; }
 .connection-line { display: flex; align-items: center; gap: 9px; margin-top: 28px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,.08); color: #91a0a7; font-size: 10px; }
@@ -351,12 +349,6 @@ html:has(.landing-page) { background: #08090a; }
   background: rgba(255,255,255,.08);
   color: #fff;
   border-color: rgba(255,255,255,.22);
-}
-
-.telegram-setup-flagged { max-width: 1200px; margin: 16px auto; padding: 0 20px; }
-.telegram-setup-flagged .storage-card {
-  background: rgba(15,16,19,.86);
-  border: 1px solid rgba(255,255,255,.08);
 }
 
 .gallery-shell { max-width: 1400px; margin: 0 auto; padding: 20px 20px 80px; }
@@ -706,9 +698,6 @@ html:has(.landing-page) { background: #08090a; }
 
 /* Legacy private space — hide completely */
 .success-banner, .welcome-row, .dashboard-grid, .profile-card, .storage-feature-card { display: none !important; }
-/* Keep storage-card for flagged telegram setup but hide by default */
-.storage-card.telegram-settings-card { display: none; }
-.telegram-setup-flagged .storage-card.telegram-settings-card { display: flex !important; }
 
 /* ===========================
    Google Photos — edge-to-edge grid overrides

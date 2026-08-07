@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 import { getAdminUser } from "@/lib/admin";
+import { checkRateLimitWithIp } from "@/lib/rate-limit";
 import { setUserRole } from "@/lib/telegram-store";
-import { mobileJson, readMobileJson } from "@/app/api/mobile/v1/_shared";
+import { mobileJson, readMobileJson, requestIp } from "@/app/api/mobile/v1/_shared";
 
 const ID = /^[a-zA-Z0-9_-]{6,64}$/;
 
@@ -11,6 +12,11 @@ export async function PATCH(
 ) {
   const admin = await getAdminUser();
   if (!admin) return mobileJson({ error: "Forbidden" }, { status: 403 });
+  try {
+    checkRateLimitWithIp(admin.id, requestIp(request), "adminWrite");
+  } catch {
+    return mobileJson({ error: "Too many requests. Try again soon." }, { status: 429 });
+  }
 
   const { id } = await params;
   if (!ID.test(id)) return mobileJson({ error: "Invalid user id" }, { status: 400 });

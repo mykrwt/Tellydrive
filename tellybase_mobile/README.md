@@ -83,7 +83,7 @@ For a physical device or production build, use an HTTPS deployment:
 
 ```bash
 flutter run \
-  --dart-define=API_BASE_URL=https://cloud.example.com
+  --dart-define=API_BASE_URL=$API_BASE_URL
 ```
 
 `API_BASE_URL` is compiled into the app. Never put bot tokens, session secrets,
@@ -96,7 +96,7 @@ flutter format --set-exit-if-changed lib test
 flutter analyze
 flutter test
 flutter build apk --debug \
-  --dart-define=API_BASE_URL=https://cloud.example.com
+  --dart-define=API_BASE_URL=$API_BASE_URL
 ```
 
 Release builds should use an organization-controlled keystore and CI secret

@@ -26,7 +26,7 @@ flutter test
 flutter build appbundle --release \
   --obfuscate \
   --split-debug-info=build/symbols \
-  --dart-define=API_BASE_URL=https://cloud.example.com
+  --dart-define=API_BASE_URL=$API_BASE_URL
 ```
 
 Retain `build/symbols` in protected release artifacts for crash symbolication.

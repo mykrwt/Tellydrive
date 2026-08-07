@@ -1,11 +1,21 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import type { AdminUserRow } from "@/lib/telegram-store";
 import { formatBytes, formatDate } from "@/components/file-manager/helpers";
 import { setUserRoleAction } from "@/app/dashboard/admin-actions";
 
-export function UserTable({ users, currentAdminId }: { users: AdminUserRow[]; currentAdminId: string }) {
+type AdminUserRowView = {
+  id: string;
+  name: string;
+  email: string;
+  role: "admin" | "user" | undefined;
+  createdAt: string;
+  lastLoginAt: string | null;
+  fileCount: number;
+  totalBytes: number;
+};
+
+export function UserTable({ users, currentAdminId }: { users: AdminUserRowView[]; currentAdminId: string }) {
   const [pending, startTransition] = useTransition();
   const [notice, setNotice] = useState<string | null>(null);
 

@@ -1,50 +1,21 @@
 import "server-only";
 
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { AccountStoreError } from "./telegram-store";
 import { sanitizeFileName, validateAnyFileType, validateFileSize, validateFileType } from "./validation";
+import {
+  adminTelegramDatabaseMode,
+  getAdminStorageTelegramConfig,
+  getServerSessionSigningSecret,
+} from "@/lib/server/admin-telegram-config";
 
-// ── Configuration ──
-// Channel 1: Auth DB uses TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID
-// Channel 2: Storage uses TELEGRAM_STORAGE_CHAT_ID (fallback to TELEGRAM_CHAT_ID) with same token
-// Future: support separate TELEGRAM_STORAGE_BOT_TOKEN if needed
+// System A only. This module never accepts a user-provided Telegram token,
+// channel ID, session, or API credential.
 
-function authConfig() {
-  let token = process.env.TELEGRAM_BOT_TOKEN?.trim() ?? "";
-  if (token.startsWith("bot")) token = token.slice(3);
-  token = token.replace(/^[\"']|[\"']$/g, "").trim();
-  let chatId = process.env.TELEGRAM_CHAT_ID?.trim() ?? "";
-  chatId = chatId.replace(/^[\"']|[\"']$/g, "").trim();
-  return {
-    token,
-    chatId,
-    apiBase: (process.env.TELEGRAM_API_BASE ?? "https://api.telegram.org").replace(/\/$/, ""),
-  };
-}
-
-export function storageConfig() {
-  const auth = authConfig();
-  let storageChatId = process.env.TELEGRAM_STORAGE_CHAT_ID?.trim() ?? "";
-  storageChatId = storageChatId.replace(/^[\"']|[\"']$/g, "").trim();
-  const storageTokenRaw = process.env.TELEGRAM_STORAGE_BOT_TOKEN?.trim() ?? "";
-  let storageToken = storageTokenRaw;
-  if (storageToken.startsWith("bot")) storageToken = storageToken.slice(3);
-  storageToken = storageToken.replace(/^[\"']|[\"']$/g, "").trim();
-
-  return {
-    token: storageToken || auth.token,
-    chatId: storageChatId || auth.chatId,
-    apiBase: auth.apiBase,
-    isSeparateChannel: Boolean(storageChatId),
-  };
-}
-
-export function databaseMode(): "telegram" | "local" | "unconfigured" {
-  const { token, chatId } = authConfig();
-  if (token && chatId) return "telegram";
-  return process.env.NODE_ENV === "production" ? "unconfigured" : "local";
+function databaseMode(): "telegram" | "local" | "unconfigured" {
+  return adminTelegramDatabaseMode();
 }
 
 export function isTelegramEnabled(): boolean {
@@ -222,8 +193,6 @@ export async function uploadToStorage(
   originalName: string,
   blob: Blob,
   opts?: {
-    userToken?: string;
-    userChatId?: string;
     onProgress?: (uploaded: number, total: number, chunkIndex?: number) => void;
     // Allow any safe file type (documents, audio, archives…) — used by the Files
     // section and Admin uploads. Defaults to media-only for the Gallery.
@@ -241,10 +210,11 @@ export async function uploadToStorage(
     throw new AccountStoreError(opts?.allowAny ? "This file type is not supported." : "Only images and videos are supported.");
   }
 
-  // Determine storage target
-  const globalStorage = storageConfig();
-  const token = opts?.userToken || globalStorage.token;
-  const chatId = opts?.userChatId || globalStorage.chatId;
+  // System A is the sole storage target. No client/user credential can
+  // override this backend capability.
+  const globalStorage = getAdminStorageTelegramConfig();
+  const token = globalStorage.token;
+  const chatId = globalStorage.chatId;
   const apiBase = globalStorage.apiBase;
 
   // Local fallback
@@ -361,21 +331,19 @@ async function mapWithConcurrency<T, R>(items: T[], concurrency: number, fn: (it
 }
 
 /**
- * Get a direct Telegram file URL (or local URL) for a file.
- * Handles chunked files by returning URL for a specific chunk or manifest.
- * For chunked files, caller should fetch all chunks and reassemble.
+ * Resolve a private System A upstream URL for backend fetches only.
+ *
+ * WARNING: a Telegram Bot API file URL embeds the bot token. Never serialize,
+ * return, redirect to, or log this value. Public APIs must proxy the bytes.
  */
-export async function getStorageFileUrl(
-  fileId: string,
-  tokenOverride?: string
-): Promise<string> {
+export async function resolvePrivateStorageFileUrl(fileId: string): Promise<string> {
   if (fileId.startsWith("local:")) {
     const id = fileId.slice(6);
-    // Must be validated by caller that user owns file
+    // Must be validated by the backend caller that the requesting user owns it.
     return `/api/local-file?id=${encodeURIComponent(id)}`;
   }
-  const globalStorage = storageConfig();
-  const token = tokenOverride || globalStorage.token;
+  const globalStorage = getAdminStorageTelegramConfig();
+  const token = globalStorage.token;
   const apiBase = globalStorage.apiBase;
   if (!token) throw new AccountStoreError("Storage token missing.");
 
@@ -399,14 +367,10 @@ export async function getStorageFileUrl(
   return pending;
 }
 
-/**
- * Get URLs for all chunks of a chunked file (for reassembly/streaming).
- * Resolved in parallel with a small pool — a 2 GB file is ~108 chunk URLs,
- * which used to take 108 sequential Telegram round-trips.
- */
-export async function getChunkUrls(chunks: ChunkMeta[], tokenOverride?: string): Promise<string[]> {
+/** Resolve private chunk upstreams for backend reassembly only. */
+export async function resolvePrivateChunkUrls(chunks: ChunkMeta[]): Promise<string[]> {
   const ordered = chunks.slice().sort((a, b) => a.order - b.order);
-  return mapWithConcurrency(ordered, 6, (c) => getStorageFileUrl(c.fileId, tokenOverride));
+  return mapWithConcurrency(ordered, 6, (chunk) => resolvePrivateStorageFileUrl(chunk.fileId));
 }
 
 /**
@@ -427,7 +391,7 @@ export async function sendPartToStorage(
   caption?: string
 ): Promise<{ fileId: string; messageId: number }> {
   const name = sanitizeFileName(partName);
-  const globalStorage = storageConfig();
+  const globalStorage = getAdminStorageTelegramConfig();
   const token = globalStorage.token;
   const chatId = globalStorage.chatId;
   const apiBase = globalStorage.apiBase;
@@ -447,10 +411,10 @@ export async function sendPartToStorage(
   });
 }
 
-// ── Signed part tokens ──
-// The browser uploads parts individually and gets back an opaque signed token
-// per part; finalize only accepts tokens this server issued. This prevents
-// referencing arbitrary Telegram file_ids the user does not own.
+// ── Sealed part tokens ──
+// The client gets an authenticated-encrypted capability per part. Finalize
+// accepts only capabilities this server issued, while Telegram storage IDs and
+// message IDs remain confidential inside the System A boundary.
 
 export type PartTokenPayload = {
   sub: string; // user id the part was uploaded by
@@ -463,19 +427,40 @@ export type PartTokenPayload = {
 };
 
 function partTokenSecret(): string {
-  return (
-    process.env.SESSION_SECRET ||
-    process.env.TELEGRAM_BOT_TOKEN ||
-    (process.env.NODE_ENV !== "production" ? "tellybase-local-development-session-key" : "")
-  );
+  return getServerSessionSigningSecret();
 }
 
+const PART_TOKEN_VERSION = 1;
+const PART_TOKEN_IV_BYTES = 12;
+const PART_TOKEN_TAG_BYTES = 16;
+const PART_TOKEN_AAD = Buffer.from("tellybase:upload-part:v1", "utf8");
+
+function partTokenKey(secret: string): Buffer {
+  return createHash("sha256").update(secret, "utf8").digest();
+}
+
+/**
+ * Seal storage metadata with authenticated encryption before it crosses the
+ * backend boundary. Unlike the former signed JSON format, clients cannot
+ * decode Telegram file IDs, message IDs, or any other System A reference.
+ */
 export function signPartToken(payload: PartTokenPayload): string {
   const secret = partTokenSecret();
   if (!secret) throw new AccountStoreError("SESSION_SECRET is not configured.");
-  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const sig = createHmac("sha256", secret).update(encoded).digest("base64url");
-  return `${encoded}.${sig}`;
+  const iv = randomBytes(PART_TOKEN_IV_BYTES);
+  const cipher = createCipheriv("aes-256-gcm", partTokenKey(secret), iv);
+  cipher.setAAD(PART_TOKEN_AAD);
+  const ciphertext = Buffer.concat([
+    cipher.update(JSON.stringify(payload), "utf8"),
+    cipher.final(),
+  ]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([
+    Buffer.from([PART_TOKEN_VERSION]),
+    iv,
+    tag,
+    ciphertext,
+  ]).toString("base64url");
 }
 
 export function verifyPartToken(token: unknown): PartTokenPayload | null {
@@ -483,12 +468,20 @@ export function verifyPartToken(token: unknown): PartTokenPayload | null {
   const secret = partTokenSecret();
   if (!secret) return null;
   try {
-    const [encoded, signature, extra] = token.split(".");
-    if (!encoded || !signature || extra) return null;
-    const actual = Buffer.from(signature, "base64url");
-    const expected = Buffer.from(createHmac("sha256", secret).update(encoded).digest("base64url"), "base64url");
-    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
-    const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as PartTokenPayload;
+    const sealed = Buffer.from(token, "base64url");
+    const headerBytes = 1 + PART_TOKEN_IV_BYTES + PART_TOKEN_TAG_BYTES;
+    if (sealed.length <= headerBytes || sealed[0] !== PART_TOKEN_VERSION) return null;
+    const iv = sealed.subarray(1, 1 + PART_TOKEN_IV_BYTES);
+    const tag = sealed.subarray(1 + PART_TOKEN_IV_BYTES, headerBytes);
+    const ciphertext = sealed.subarray(headerBytes);
+    const decipher = createDecipheriv("aes-256-gcm", partTokenKey(secret), iv);
+    decipher.setAAD(PART_TOKEN_AAD);
+    decipher.setAuthTag(tag);
+    const plaintext = Buffer.concat([
+      decipher.update(ciphertext),
+      decipher.final(),
+    ]).toString("utf8");
+    const payload = JSON.parse(plaintext) as PartTokenPayload;
     if (
       typeof payload.sub !== "string" ||
       typeof payload.uploadId !== "string" ||
@@ -513,27 +506,15 @@ export function verifyPartToken(token: unknown): PartTokenPayload | null {
  */
 export function friendlyStorageError(msg: string): string {
   const lower = msg.toLowerCase();
-  if (lower.includes("chat not found")) {
-    return "Storage channel not found. Check the channel ID and make sure the bot was added to the channel.";
-  }
-  if (
-    lower.includes("not enough rights") ||
-    lower.includes("forbidden") ||
-    lower.includes("bot is not a member") ||
-    lower.includes("no rights")
-  ) {
-    return "The bot can't post in the storage channel. Make it an admin with “Post Messages” permission.";
-  }
   if (
     lower.includes("too big") ||
     lower.includes("entity too large") ||
     lower.includes("request entity") ||
     lower.includes("file is too big")
   ) {
-    return "This file is larger than Telegram accepts. Try a smaller file.";
+    return "The storage service rejected this file size. Try a smaller file.";
   }
-  if (lower.includes("timeout") || lower.includes("network") || lower.includes("econn")) {
-    return "Could not reach Telegram storage right now. Check your connection and try again.";
-  }
-  return "Something went wrong. Please try again.";
+  // Configuration, provider, channel, bot, URL, and permission details remain
+  // in System A logs. Clients receive one provider-neutral failure message.
+  return "Private storage is temporarily unavailable. Please try again.";
 }

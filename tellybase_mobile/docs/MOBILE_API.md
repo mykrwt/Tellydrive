@@ -45,5 +45,9 @@ rate-limited by IP and account key.
 - `GET/PATCH/DELETE /api/folders/:id`
 
 Native clients intentionally omit the browser `Origin` header. Ownership checks,
-input validation, upload part signatures, rate limits, and server-side session
-validation still apply to every operation.
+input validation, authenticated-encrypted upload grants, rate limits, and
+server-side session validation still apply to every operation.
+
+Media and thumbnails are always streamed from these same-origin APIs. The app
+never receives Telegram Bot API URLs, bot/channel/message IDs, or any other
+System A storage reference.

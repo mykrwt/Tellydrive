@@ -11,25 +11,13 @@ class _ImageRequest {
 
 final _imageRequestProvider =
     FutureProvider.autoDispose.family<_ImageRequest, String>((ref, path) async {
-  final client = ref.watch(apiClientProvider);
-  final sessionStorage = ref.watch(sessionStorageProvider);
-  var resolvedPath = path;
-  // Ask the authenticated API for a short-lived thumbnail URL first. This
-  // prevents the private session cookie from ever entering a cross-host
-  // redirect to Telegram's CDN.
-  if (path.contains('thumbnail=1')) {
-    final separator = path.contains('?') ? '&' : '?';
-    final json = await client.getJson('$path${separator}redirect=0');
-    final value = json['url'];
-    if (value is String && value.isNotEmpty) resolvedPath = value;
+  final uri = Uri.parse(path);
+  if (uri.hasScheme || !path.startsWith('/api/')) {
+    throw ArgumentError('Images must use an authenticated same-origin API path.');
   }
-
-  final uri = Uri.parse(resolvedPath);
-  if (uri.hasScheme) return _ImageRequest(url: uri.toString());
-
-  final cookie = await sessionStorage.readCookie();
+  final cookie = await ref.watch(sessionStorageProvider).readCookie();
   return _ImageRequest(
-    url: AppConfig.resolveUri(resolvedPath).toString(),
+    url: AppConfig.resolveUri(path).toString(),
     headers: cookie == null ? null : <String, String>{'Cookie': cookie},
   );
 });

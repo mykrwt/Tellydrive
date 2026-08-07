@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
   }
 
   const attemptKey = `mobile:${requestIp(request)}:${email}`;
-  const rate = checkLoginRateLimit(attemptKey, 5, 15 * 60 * 1000);
+  const rate = checkLoginRateLimit(attemptKey, 5);
   if (!rate.allowed) {
     return mobileJson(
       { error: `Too many attempts for this email. Try again in ${rate.retryAfterSec ?? 60}s.` },

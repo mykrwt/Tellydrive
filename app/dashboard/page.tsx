@@ -1,9 +1,8 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
-import { findUserById, getFilesForUser, isTelegramSetupEnabled } from "@/lib/telegram-store";
+import { findUserById, getFilesForUser } from "@/lib/telegram-store";
 import { isAdminUser } from "@/lib/admin";
 import { Gallery } from "@/components/gallery";
-import { TelegramSettings } from "@/components/telegram-settings";
 import { DashboardChrome } from "@/components/dashboard-chrome";
 import { getDashboardSummary } from "@/lib/dashboard-summary";
 
@@ -60,19 +59,11 @@ export default async function DashboardPage({
     height: file.height,
     duration: file.duration,
   }));
-  const showTelegramSetup = isTelegramSetupEnabled();
-
   return (
     <DashboardChrome
       user={{ name: user.name, email: user.email, isAdmin: isAdminUser(user) }}
       summary={summary}
     >
-      {showTelegramSetup && (
-        <div className="tb-flagged-panel">
-          <TelegramSettings initialToken={user.telegramToken} initialChatId={user.telegramChatId} />
-        </div>
-      )}
-
       <Gallery
         initialFiles={safeFiles}
         initialHasMore={initialResults.length > 48}

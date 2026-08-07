@@ -28,10 +28,10 @@ class ChunkingPlan {
     int chunkSize = AppConfig.chunkSize,
   }) {
     if (totalSize < 0) {
-      throw const AppException('File size cannot be negative.');
+      throw const LocalStorageException('File size cannot be negative.');
     }
     if (chunkSize <= 0) {
-      throw const AppException('Chunk size must be positive.');
+      throw const LocalStorageException('Chunk size must be positive.');
     }
     // Keep the smallest single chunk >= _minSizeForChunking so we don't spam
     // Telegram with many tiny messages for small files.

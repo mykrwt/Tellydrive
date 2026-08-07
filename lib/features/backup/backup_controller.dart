@@ -84,5 +84,3 @@ class BackupState {
       );
 }
 
-final backupControllerProvider =
-    NotifierProvider<BackupController, BackupState>(BackupController.new);

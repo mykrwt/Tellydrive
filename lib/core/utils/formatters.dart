@@ -18,7 +18,7 @@ class Formatters {
   static String count(int n) => n >= 1000 ? '${(n / 1000).toStringAsFixed(1)}k' : '$n';
 
   /// A short file-size label like "3.2 GB" used in tiles.
-  static String compactBytes(int bytes) => bytes(bytes);
+  static String compactBytes(int bytes) => Formatters.bytes(bytes);
 
   static double progressFraction({required int done, required int total}) =>
       total <= 0 ? 0 : (done / total).clamp(0, 1);

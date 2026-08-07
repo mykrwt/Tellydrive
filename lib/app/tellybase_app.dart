@@ -43,6 +43,7 @@ class RootGate extends ConsumerWidget {
       AuthCodeRequested() => const OtpScreen(),
       AuthNeedsPassword() => const TwoFactorScreen(),
       AuthAuthenticated() => const HomeShell(),
+      _ => const SignInScreen(), // exhaustive fallback
     };
   }
 }

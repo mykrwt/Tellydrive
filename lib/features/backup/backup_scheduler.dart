@@ -36,7 +36,7 @@ class BackupScheduler {
       _taskTag,
       frequency: const Duration(hours: 6),
       constraints: Constraints(networkType: NetworkType.connected),
-      existingWork: ExistingPeriodicWork.keep,
+      existingWorkPolicy: ExistingWorkPolicy.keep,
     );
   }
 
@@ -94,7 +94,8 @@ class BackgroundBackup {
     );
     var done = 0;
     for (final path in paths) {
-      final assets = await path.getAssetListPaged(0, path.assetCount);
+      final count = await path.assetCountAsync;
+      final assets = await path.getAssetListPaged(page: 0, size: count);
       for (final asset in assets) {
         if (uploaded.contains(asset.id)) continue;
         final file = await _original(asset);
@@ -130,7 +131,8 @@ class BackgroundBackup {
 
   static Future<File?> _original(AssetEntity asset) async {
     try {
-      return await asset.originalFile;
+      // photo_manager 3.x uses originFile (nullable File?)
+      return await asset.originFile;
     } on Object {
       try {
         return await asset.file;

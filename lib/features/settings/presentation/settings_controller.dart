@@ -30,5 +30,3 @@ class SettingsState {
       SettingsState(darkMode: darkMode ?? this.darkMode);
 }
 
-final settingsControllerProvider =
-    NotifierProvider<SettingsController, SettingsState>(SettingsController.new);

@@ -3,8 +3,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/di/providers.dart';
 import '../../features/library/domain/entities/media_item.dart';
-import '../../features/library/presentation/library_controller.dart';
 import '../storage/media_cache.dart';
 import '../utils/media_type.dart';
 
@@ -46,7 +46,7 @@ class Thumbnail extends ConsumerWidget {
             fit: StackFit.expand,
             children: [
               Image.file(
-                FileImage(path),
+                File(path),
                 fit: fit,
                 errorBuilder: (_, __, ___) => _placeholder(item),
               ),
@@ -57,7 +57,7 @@ class Thumbnail extends ConsumerWidget {
             ],
           )
         : Image.file(
-            FileImage(path),
+            File(path),
             fit: fit,
             errorBuilder: (_, __, ___) => _placeholder(item),
           );

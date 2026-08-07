@@ -41,13 +41,13 @@ class BackupService {
 
     var backedUp = 0;
     for (final path in paths) {
-      final total = path.assetCount;
+      final total = await path.assetCountAsync;
       var page = 0;
       const pageSize = 50;
       var fetched = 0;
 
       while (fetched < total) {
-        final assets = await path.getAssetListPaged(page, pageSize);
+        final assets = await path.getAssetListPaged(page: page, size: pageSize);
         if (assets.isEmpty) break;
 
         for (final asset in assets) {
@@ -89,7 +89,7 @@ class BackupService {
 
   Future<File?> _originalFile(AssetEntity asset) async {
     try {
-      return await asset.originalFile;
+      return await asset.originFile;
     } on Object {
       try {
         return await asset.file;

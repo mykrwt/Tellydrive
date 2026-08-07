@@ -140,10 +140,10 @@ class MtprotoStorage implements TelegramStorage {
       final sink = out.openWrite();
       try {
         for (final part in parts) {
-          await sink.addStream(part.openRead());
+          await (sink as dynamic).addStream(part.openRead());
         }
       } finally {
-        await sink.close();
+        await (sink as dynamic).close();
       }
     } finally {
       try {
@@ -170,9 +170,9 @@ class MtprotoStorage implements TelegramStorage {
         destination: part.path,
         onProgress: onProgress,
       );
-      await sink.addStream(part.openRead());
+      await (sink as dynamic).addStream(part.openRead());
     } finally {
-      await sink.close();
+      await (sink as dynamic).close();
       try {
         await tmp.delete(recursive: true);
       } on Object {
@@ -263,7 +263,7 @@ class MtprotoStorage implements TelegramStorage {
         remaining -= bytes.length;
       }
     } finally {
-      await sink.close();
+      await (sink as dynamic).close();
       await raf.close();
     }
   }

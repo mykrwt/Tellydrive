@@ -36,7 +36,7 @@ class BackupScheduler {
       _taskTag,
       frequency: const Duration(hours: 6),
       constraints: Constraints(networkType: NetworkType.connected),
-      existingWorkPolicy: ExistingWorkPolicy.keep,
+      existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
     );
   }
 

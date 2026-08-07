@@ -1,15 +1,15 @@
 // ignore_for_file: avoid_dynamic_calls
 //
 // ─────────────────────────────────────────────────────────────────────────────
-//  THE ONLY FILE THAT IMPORTS `package:mtproto`.
+//  THE ONLY FILE THAT IMPORTS `package:telegram_client`.
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // Everything above this layer is protocol-agnostic. This file maps the small
-// set of Telegram TL surfaces TellyBase needs onto the `mtproto` package's
-// `TelegramClient`. If you upgrade `mtproto` / `televerse`, adjust the method
+// set of Telegram TL surfaces TellyBase needs onto the `telegram_client` package's
+// `TelegramClient`. If you upgrade `telegram_client` / `televerse`, adjust the method
 // calls here and nowhere else.
 //
-// The concrete signatures below follow the `mtproto` TelegramClient API:
+// The concrete signatures below follow the `telegram_client` TelegramClient API:
 //   * sendCode / signIn / getPassword / checkPassword / getMe
 //   * getHistory(peer, ...) for the Saved Messages scan
 //   * sendMedia / editMessage / deleteMessages for uploads & updates
@@ -19,7 +19,7 @@
 
 import 'dart:io';
 
-import 'package:mtproto/mtproto.dart' as mtp;
+import 'package:telegram_client/mtproto/mtproto.dart' as mtp;
 
 import '../../core/config/app_config.dart';
 import '../../core/error/app_exception.dart';

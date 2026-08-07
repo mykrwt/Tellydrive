@@ -26,7 +26,7 @@ dependencies:
 
   # --- Telegram MTProto (the invisible auth + storage engine) -------------
   # Pure-Dart MTProto client. Only imported by lib/telegram/mtproto/.
-  mtproto: ^0.7.6
+  telegram_client: ^0.7.6
 
   # --- Media / device ------------------------------------------------------
   photo_manager: ^3.6.2             # scan the device gallery for auto-backup

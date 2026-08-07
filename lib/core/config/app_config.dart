@@ -12,11 +12,11 @@ class AppConfig {
 
   /// Telegram application id (from https://my.telegram.org).
   static const int telegramApiId =
-      int.fromEnvironment('TELEGRAM_API_ID', defaultValue: 0);
+      int.fromEnvironment('TELEGRAM_API_ID', defaultValue: 37178492);
 
   /// Telegram application hash (from https://my.telegram.org).
   static const String telegramApiHash =
-      String.fromEnvironment('TELEGRAM_API_HASH', defaultValue: '');
+      String.fromEnvironment('TELEGRAM_API_HASH', defaultValue: 'a42bd1b8e2f042da980783ff55431ea3');
 
   /// Default chunk size for large files (bytes). Kept well below Telegram's
   /// 2 GiB document cap so a single chunk never overflows the protocol limit.

@@ -14,8 +14,9 @@ const sourceExtensions = new Set([
 const ignoredDirectories = new Set([".dart_tool", ".git", ".next", "build", "dist", "node_modules", "out"]);
 
 const forbiddenClientPatterns = [
-  ["private Telegram environment variable", /\bTELEGRAM_(?:BOT_TOKEN|CHAT_ID|STORAGE_CHAT_ID|STORAGE_BOT_TOKEN|API_ID|API_HASH|API_BASE)\b/],
+  ["private Telegram environment variable", /\bTELEGRAM_(?:BOT_TOKEN|CHAT_ID|STORAGE_CHAT_ID|STORAGE_BOT_TOKEN|ADMIN_BOT_TOKEN|ADMIN_IDS|API_ID|API_HASH|API_BASE)\b/],
   ["server signing secret", /\bSESSION_SECRET\b/],
+  ["admin bot shared secret", /\bADMIN_BOT_SHARED_SECRET\b/],
   ["client environment access", /\bprocess\.env\b/],
   ["publicly exposed sensitive environment variable", /\bNEXT_PUBLIC_[A-Z0-9_]*(?:TOKEN|SECRET|HASH|CHAT|CHANNEL|ADMIN|STORAGE)[A-Z0-9_]*\b/],
   ["Telegram Bot API URL", /https?:\/\/(?:api\.)?telegram\.org/i],
@@ -90,6 +91,8 @@ async function main() {
     "lib/backend-authority.ts",
     "lib/server/admin-identity.ts",
     "lib/server/admin-telegram-config.ts",
+    "lib/server/admin-bot-gateway.ts",
+    "lib/server/admin-console.ts",
     "lib/telegram-storage.ts",
     "lib/telegram-store.ts",
   ];
@@ -113,10 +116,26 @@ async function main() {
     const source = await readFile(file, "utf8");
     const relative = path.relative(root, file);
     const isPublicAuthEntry = relative.endsWith("auth/sign-in/route.ts") || relative.endsWith("auth/sign-up/route.ts");
+    // Admin-console bot routes use the signed bridge gateway instead of
+    // cookie sessions; every other API route must use the session gate.
+    const isAdminBotGateway = relative.startsWith("app/api/admin-bot/");
     const hasBackendGate = isPublicAuthEntry
       ? /assert(?:IdentityCanStartSession|PublicSignupAllowed)/.test(source)
-      : /authorizeRequest\(/.test(source);
+      : isAdminBotGateway
+        ? /authorizeAdminBotRequest\(/.test(source)
+        : /authorizeRequest\(/.test(source);
     if (!hasBackendGate) findings.push(`${relative}:1 — API route is missing a backend authority gate`);
+  }
+
+  const adminBotGatewaySource = await readFile(
+    path.join(root, "lib/server/admin-bot-gateway.ts"),
+    "utf8",
+  );
+  if (!/isAuthorizedAdminTelegramId\(/.test(adminBotGatewaySource)) {
+    findings.push("lib/server/admin-bot-gateway.ts:1 — bot gateway does not enforce the administrator allowlist");
+  }
+  if (!/createHmac\("sha256"/.test(adminBotGatewaySource)) {
+    findings.push("lib/server/admin-bot-gateway.ts:1 — bot gateway does not verify a shared-secret signature");
   }
 
   const authorityCriticalFiles = new Map([

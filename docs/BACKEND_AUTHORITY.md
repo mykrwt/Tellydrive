@@ -58,6 +58,31 @@ admin principal and have administrative rate limits. An administrator cannot
 revoke their own role, ban/suspend themselves, or disable their own storage
 through these APIs.
 
+## Admin-console bot requests
+
+The private Telegram admin bot is an administrator *interface* only. Its bridge
+process forwards each Telegram update to `POST /api/admin-bot/update`; the
+gateway (`lib/server/admin-bot-gateway.ts`) validates, in order:
+
+1. **Origin** — HMAC-SHA256 signature over `<timestamp>\n<raw body>` with the
+   `ADMIN_BOT_SHARED_SECRET`, a `±5 min` freshness window, and a per-bot
+   update-id dedupe (replay protection). This proves the update was fetched by
+   our own System A bridge.
+2. **Operator identity** — the update's sender Telegram user ID must be in the
+   backend-owned `TELEGRAM_ADMIN_IDS` allowlist. The bridge applies the same
+   allowlist before forwarding, so strangers never reach the gateway.
+3. **Rate limit** — per-operator admin-bot limit.
+
+Only then does `lib/server/admin-console.ts` interpret the command/menu tap and
+call the same validated store operations used by the web dashboard (user
+policy, roles, maintenance, releases, announcements). Every mutation is
+recorded in the backend activity log with the `telegram:<id>` actor. Bootstrap
+operator accounts (`ADMIN_EMAILS`) are protected from ban/suspend/demote/
+storage-disable through this channel as well.
+
+The bridge never interprets message content and never performs operations; all
+business logic and authority decisions remain backend-side.
+
 ## Action policy
 
 `authorizeRequest()` recognizes explicit actions:

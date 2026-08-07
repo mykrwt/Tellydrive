@@ -104,6 +104,10 @@ export const limits = {
   // Privileged administrative reads/writes always have backend rate limits.
   adminRead: { limit: 60, windowMs: 60_000 },
   adminWrite: { limit: 20, windowMs: 60_000 },
+  // Admin-console bot updates (per authorized Telegram account): button
+  // browsing of lists/pages is chatty, so this is more generous than adminWrite
+  // but still bounds abuse of the private gateway.
+  adminBot: { limit: 90, windowMs: 60_000 },
   // Global API fallback per IP: 200/min
   apiIp: { limit: 200, windowMs: 60_000 },
 };

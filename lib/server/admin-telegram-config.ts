@@ -57,6 +57,52 @@ export function getAdminStorageTelegramConfig(): AdminStorageTelegramConfig {
   });
 }
 
+/** Private Telegram admin-console bot (System A, operator only). */
+export type AdminBotTelegramConfig = Readonly<{
+  token: string;
+  apiBase: string;
+  configured: boolean;
+}>;
+
+export function getAdminBotTelegramConfig(): AdminBotTelegramConfig {
+  const token = cleanBotToken(process.env.TELEGRAM_ADMIN_BOT_TOKEN);
+  return Object.freeze({
+    token,
+    apiBase: clean(process.env.TELEGRAM_API_BASE).replace(/\/$/, "") || DEFAULT_TELEGRAM_API_BASE,
+    configured: Boolean(token),
+  });
+}
+
+/**
+ * Numeric Telegram user IDs allowed to control the private admin-console bot.
+ * The backend re-checks this allowlist for every bot request — the bridge
+ * process uses the same list only to avoid forwarding strangers.
+ */
+export function getAdminBotAuthorizedIds(): number[] {
+  return (process.env.TELEGRAM_ADMIN_IDS ?? "")
+    .split(",")
+    .map((value) => Number(value.trim()))
+    .filter((value) => Number.isInteger(value) && value > 0);
+}
+
+export function isAuthorizedAdminTelegramId(value: number | string): boolean {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isInteger(numeric) || numeric <= 0) return false;
+  return getAdminBotAuthorizedIds().includes(numeric);
+}
+
+/**
+ * HMAC secret shared between the admin-console bridge process and this backend
+ * so the gateway can prove an update was fetched and forwarded by our own
+ * System A bot process. Never expose it to browsers or mobile clients.
+ */
+export function getAdminBotSharedSecret(): string {
+  const secret = clean(process.env.ADMIN_BOT_SHARED_SECRET);
+  if (secret) return secret;
+  // Local development fallback (mirrors the session-secret policy).
+  return process.env.NODE_ENV !== "production" ? "tellybase-local-admin-bot-key" : "";
+}
+
 export function adminTelegramDatabaseMode(): "telegram" | "local" | "unconfigured" {
   const { token, chatId } = getAdminAccountTelegramConfig();
   if (token && chatId) return "telegram";

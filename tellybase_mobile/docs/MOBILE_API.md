@@ -35,6 +35,34 @@ rate-limited by IP and account key.
 | `GET` | `/api/mobile/v1/admin` | Admin metrics and users |
 | `PATCH` | `/api/mobile/v1/admin/users/:id` | Change backend role/account/subscription/storage policy |
 | `PATCH` | `/api/mobile/v1/admin/system` | Change backend maintenance state |
+| `GET` | `/api/mobile/v1/app/state` | Currently published release + active announcement |
+| `GET` | `/api/mobile/v1/releases/latest/download` | APK bytes of the published release (proxied) |
+
+## App state (updates & announcements)
+
+`GET /api/mobile/v1/app/state` returns display hints the app may show:
+
+```json
+{
+  "state": {
+    "release": {
+      "versionName": "1.2.3",
+      "versionCode": 42,
+      "notes": "Fixed uploads",
+      "publishedAt": "2026-08-07T09:00:00.000Z",
+      "size": 12345678,
+      "fileName": "tellybase-1.2.3.apk",
+      "downloadPath": "/api/mobile/v1/releases/latest/download"
+    },
+    "announcement": { "message": "…", "updatedAt": "2026-08-07T09:00:00.000Z" }
+  }
+}
+```
+
+`downloadPath` is a same-origin relative path — call it against the backend
+origin only. The APK is streamed through the backend; no Telegram storage URL
+or file id is ever included. Like every endpoint, the app must treat these
+values as hints and re-validate on the server with each request.
 
 ## Existing storage endpoints used by Android
 

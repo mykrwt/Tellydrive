@@ -241,6 +241,7 @@ export function Gallery({
       fd.append("size", String(file.size));
       fd.append("mimeType", file.type || "application/octet-stream");
       fd.append("uploadId", uploadId);
+      fd.append("source", "gallery");
 
       let attempt = 0;
       let res: Response | null = null;
@@ -272,14 +273,7 @@ export function Gallery({
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: file.name,
-          size: file.size,
-          mimeType: file.type || "application/octet-stream",
-          uploadId,
-          parts: tokens,
-          source: "gallery",
-        }),
+        body: JSON.stringify({ uploadId, parts: tokens }),
       },
       2
     );
@@ -400,12 +394,7 @@ export function Gallery({
   const handleDownload = useCallback(async (file: ClientFile) => {
     try {
       const res = await fetchWithRetry(`/api/files/${file.id}?download=1&proxy=1`, {}, 1);
-      if (!res.ok) {
-        const data = (await fetch(`/api/files/${file.id}`).then((response) => response.json())) as { url?: string; urls?: string[] };
-        if (data.url) window.open(data.url, "_blank");
-        else if (data.urls) window.open(data.urls[0], "_blank");
-        return;
-      }
+      if (!res.ok) throw new Error("Download failed");
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");

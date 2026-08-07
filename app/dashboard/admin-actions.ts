@@ -1,12 +1,21 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { getAdminUser } from "@/lib/admin";
+import { authorizeRequest } from "@/lib/backend-authority";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { setUserRole } from "@/lib/telegram-store";
 
 export async function setUserRoleAction(userId: string, role: "admin" | "user"): Promise<{ ok: boolean; error?: string }> {
-  const admin = await getAdminUser();
-  if (!admin) return { ok: false, error: "Unauthorized" };
+  let admin;
+  try {
+    admin = (await authorizeRequest("admin:write")).user;
+    checkRateLimit(admin.id, "adminWrite");
+  } catch (error) {
+    if ((error as { status?: number }).status === 429) {
+      return { ok: false, error: "Too many requests. Try again soon." };
+    }
+    return { ok: false, error: "Unauthorized" };
+  }
   if (!userId || typeof userId !== "string" || !/^[a-zA-Z0-9_-]{6,64}$/.test(userId)) {
     return { ok: false, error: "Invalid user id" };
   }

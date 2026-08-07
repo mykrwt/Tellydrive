@@ -1,13 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { getCurrentUser } from "@/lib/auth";
+import { authorityErrorPayload, authorizeRequest } from "@/lib/backend-authority";
 import { getFilesForUser } from "@/lib/telegram-store";
 import { checkRateLimit, getRetryAfterSec } from "@/lib/rate-limit";
 
 export async function GET(req: NextRequest) {
-  const user = await getCurrentUser();
-  if (!user) return new NextResponse("Unauthorized", { status: 401, headers: { "Cache-Control": "no-store" } });
+  let user;
+  try {
+    user = (await authorizeRequest("storage:download")).user;
+  } catch (error) {
+    const failure = authorityErrorPayload(error);
+    return NextResponse.json(failure.body, { status: failure.status, headers: { "Cache-Control": "no-store" } });
+  }
 
   try {
     checkRateLimit(user.id, "download");

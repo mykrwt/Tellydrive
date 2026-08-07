@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 import { AuthPage } from "@/components/auth-page";
-import { getSessionUserId } from "@/lib/auth";
-import { databaseMode } from "@/lib/telegram-store";
+import { authorizeRequest } from "@/lib/backend-authority";
 
 export const metadata = { title: "Sign in" };
 
@@ -13,9 +12,19 @@ export default async function SignInPage({
   const params = searchParams ? await searchParams : undefined;
   const initialError =
     params?.error === "store"
-      ? "Could not reach the account store. Check Telegram bot token, chat ID, and bot admin rights."
-      : params?.error;
+      ? "The account service is temporarily unavailable. Please try again later."
+      : params?.error === "access"
+        ? "The backend has restricted access to this account or is in maintenance mode."
+        : params?.error;
 
-  if (await getSessionUserId()) redirect("/dashboard");
-  return <AuthPage mode="signin" database={databaseMode()} initialError={initialError} />;
+  let approved = false;
+  try {
+    await authorizeRequest("account:read");
+    approved = true;
+  } catch {
+    // A signed local cookie is not authority; render sign-in unless the backend
+    // currently approves the account and system state.
+  }
+  if (approved) redirect("/dashboard");
+  return <AuthPage mode="signin" initialError={initialError} />;
 }

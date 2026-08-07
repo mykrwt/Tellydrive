@@ -57,8 +57,8 @@ export function useUploader(onComplete: () => Promise<void>) {
       fd.append("size", String(file.size));
       fd.append("mimeType", file.type || "application/octet-stream");
       fd.append("uploadId", uploadId);
-      fd.append("allowAny", "1");
       fd.append("source", "files");
+      if (folderId) fd.append("folderId", folderId);
 
       let attempt = 0;
       let res: Response | null = null;
@@ -88,16 +88,7 @@ export function useUploader(onComplete: () => Promise<void>) {
     const fin = await api("/api/files/finalize", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: file.name,
-        size: file.size,
-        mimeType: file.type || "application/octet-stream",
-        uploadId,
-        parts: tokens,
-        folderId,
-        allowAny: true,
-        source: "files",
-      }),
+      body: JSON.stringify({ uploadId, parts: tokens }),
     });
     if (!fin.ok) throw new Error(fin.data?.error || "Upload failed");
   }, []);
@@ -125,7 +116,6 @@ export function useUploader(onComplete: () => Promise<void>) {
             const fd = new FormData();
             fd.append("file", item.file, item.file.name);
             fd.append("folderId", folderId ?? "root");
-            fd.append("allowAny", "1");
             fd.append("source", "files");
             const res = await api("/api/files", { method: "POST", body: fd });
             if (!res.ok) throw new Error(res.data?.error || "Upload failed");

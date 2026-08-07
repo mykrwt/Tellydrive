@@ -1,4 +1,4 @@
-import { getSessionUserId } from "@/lib/auth";
+import { authorizeRequest } from "@/lib/backend-authority";
 import { Navbar } from "@/components/landing/navbar";
 import { Hero } from "@/components/landing/hero";
 import { Features } from "@/components/landing/features";
@@ -14,7 +14,13 @@ export const metadata = {
 };
 
 export default async function Home() {
-  const signedIn = Boolean(await getSessionUserId());
+  let signedIn = false;
+  try {
+    await authorizeRequest("account:read");
+    signedIn = true;
+  } catch {
+    // Client cookies are never treated as account authority.
+  }
 
   return (
     <main className="landing-page">

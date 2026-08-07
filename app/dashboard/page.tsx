@@ -1,9 +1,8 @@
 import { redirect } from "next/navigation";
-import { getCurrentUser } from "@/lib/auth";
-import { findUserById, getFilesForUser, isTelegramSetupEnabled } from "@/lib/telegram-store";
+import { authorizeRequest } from "@/lib/backend-authority";
+import { findUserById, getFilesForUser } from "@/lib/telegram-store";
 import { isAdminUser } from "@/lib/admin";
 import { Gallery } from "@/components/gallery";
-import { TelegramSettings } from "@/components/telegram-settings";
 import { DashboardChrome } from "@/components/dashboard-chrome";
 import { getDashboardSummary } from "@/lib/dashboard-summary";
 
@@ -16,11 +15,11 @@ export default async function DashboardPage({
 }) {
   let safeUser;
   try {
-    safeUser = await getCurrentUser();
-  } catch {
-    redirect("/sign-in?error=store");
+    safeUser = (await authorizeRequest("storage:read")).user;
+  } catch (error) {
+    const status = (error as { status?: number }).status;
+    redirect(status === 401 ? "/sign-in" : "/sign-in?error=access");
   }
-  if (!safeUser) redirect("/sign-in");
 
   const params = await searchParams;
   const query = typeof params.search === "string" ? params.search.trim().slice(0, 120) : "";
@@ -60,19 +59,11 @@ export default async function DashboardPage({
     height: file.height,
     duration: file.duration,
   }));
-  const showTelegramSetup = isTelegramSetupEnabled();
-
   return (
     <DashboardChrome
       user={{ name: user.name, email: user.email, isAdmin: isAdminUser(user) }}
       summary={summary}
     >
-      {showTelegramSetup && (
-        <div className="tb-flagged-panel">
-          <TelegramSettings initialToken={user.telegramToken} initialChatId={user.telegramChatId} />
-        </div>
-      )}
-
       <Gallery
         initialFiles={safeFiles}
         initialHasMore={initialResults.length > 48}

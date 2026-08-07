@@ -10,17 +10,29 @@ import {
   markLogin,
   type StoredUser,
 } from "@/lib/telegram-store";
+import { getServerSessionSigningSecret } from "@/lib/server/admin-telegram-config";
 
 const scrypt = promisify(scryptCallback);
 const COOKIE_NAME = "tellydrive_session";
 const LEGACY_COOKIE_NAME = "tellybase_session";
 
 type SessionPayload = { sub: string; exp: number };
-export type SafeUser = Pick<StoredUser, "id" | "name" | "email" | "createdAt" | "lastLoginAt" | "role">;
+export type SafeUser = Pick<
+  StoredUser,
+  | "id"
+  | "name"
+  | "email"
+  | "createdAt"
+  | "lastLoginAt"
+  | "role"
+  | "accountStatus"
+  | "subscription"
+  | "storageAccess"
+>;
 
 function safeUser(user: StoredUser): SafeUser {
-  const { id, name, email, createdAt, lastLoginAt, role } = user;
-  return { id, name, email, createdAt, lastLoginAt, role };
+  const { id, name, email, createdAt, lastLoginAt, role, accountStatus, subscription, storageAccess } = user;
+  return { id, name, email, createdAt, lastLoginAt, role, accountStatus, subscription, storageAccess };
 }
 
 export function normalizeEmail(value: string): string {
@@ -60,10 +72,7 @@ async function verifyPassword(password: string, salt: string, expected: string):
 }
 
 function sessionSecret(): string {
-  const secret =
-    process.env.SESSION_SECRET ||
-    process.env.TELEGRAM_BOT_TOKEN ||
-    (process.env.NODE_ENV !== "production" ? "tellybase-local-development-session-key" : "");
+  const secret = getServerSessionSigningSecret();
   if (!secret && process.env.NODE_ENV === "production") {
     throw new Error("SESSION_SECRET is not configured — set a strong random value (openssl rand -base64 32).");
   }
@@ -116,7 +125,7 @@ function cleanupAttempts() {
     if (v.resetAt < now && (!v.lockedUntil || v.lockedUntil < now)) loginAttempts.delete(k);
   }
 }
-export function checkLoginRateLimit(key: string, maxAttempts = 10, windowMs = 15 * 60 * 1000): { allowed: boolean; retryAfterSec?: number } {
+export function checkLoginRateLimit(key: string, maxAttempts = 10): { allowed: boolean; retryAfterSec?: number } {
   cleanupAttempts();
   const now = Date.now();
   const entry = loginAttempts.get(key);
@@ -173,6 +182,15 @@ export async function registerUser(name: string, email: string, password: string
     passwordSalt: passwordData.salt,
     createdAt: now,
     lastLoginAt: now,
+    role: "user",
+    accountStatus: "active",
+    subscription: {
+      tier: "free",
+      status: "active",
+      expiresAt: null,
+      updatedAt: now,
+    },
+    storageAccess: "enabled",
   };
   await createUser(user);
   return safeUser(user);

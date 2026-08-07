@@ -9,10 +9,8 @@
  *      (or the local `.data/auth.json` dev fallback when Telegram env vars
  *      are not set). Takes effect immediately; no redeploy required.
  *
- * Usage (run from the repo root):
- *   node scripts/set-admin.mjs you@example.com            # make admin
- *   node scripts/set-admin.mjs you@example.com --demote   # back to user
- *   npm run make-admin -- you@example.com                 # same thing
+ * Usage (run from the repo root): pass the exact existing account email as
+ * the first argument and optionally add --demote.
  *
  * Reads TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID (and TELEGRAM_API_BASE) from the
  * environment or from .env / .env.local.
@@ -76,9 +74,11 @@ function patchDatabase(raw, label) {
     const known = db.users.map((u) => u.email).join(", ") || "(none)";
     throw new Error(`No account found for ${emailArg}. Accounts in this database: ${known}`);
   }
-  if ((user.role ?? "user") === newRole) {
-    console.log(`ℹ  ${emailArg} is already ${newRole === "admin" ? "an admin" : "a regular user"} — nothing to do.`);
-    process.exit(0);
+  // Retired mixed-architecture fields must not survive any administrative
+  // rewrite of the account database.
+  for (const account of db.users) {
+    delete account.telegramToken;
+    delete account.telegramChatId;
   }
   user.role = newRole;
   db.revision = (Number.isInteger(db.revision) ? db.revision : 0) + 1;

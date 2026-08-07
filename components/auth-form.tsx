@@ -6,7 +6,6 @@ import { signIn, signUp } from "@/app/actions";
 
 type Props = {
   mode: "signin" | "signup";
-  database: "telegram" | "local" | "unconfigured";
   initialError?: string;
 };
 
@@ -23,7 +22,7 @@ function EyeIcon({ open }: { open: boolean }) {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/>{!open && <path d="m4 4 16 16"/>}</svg>;
 }
 
-export function AuthForm({ mode, database, initialError }: Props) {
+export function AuthForm({ mode, initialError }: Props) {
   const action = mode === "signin" ? signIn : signUp;
   const [state, formAction, pending] = useActionState(action, { error: initialError });
   const [showPassword, setShowPassword] = useState(false);
@@ -104,10 +103,6 @@ export function AuthForm({ mode, database, initialError }: Props) {
         <Link href={isSignIn ? "/sign-up" : "/sign-in"}>{isSignIn ? "Create an account" : "Sign in"}</Link>
       </p>
 
-      <div className={`database-status ${database}`}>
-        <span className="status-dot" />
-        {database === "telegram" ? "Cloud account database connected" : database === "local" ? "Local database · development mode" : "Database needs configuration"}
-      </div>
     </div>
   );
 }

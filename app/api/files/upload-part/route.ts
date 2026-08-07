@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth";
+import { authorityErrorPayload, authorizeRequest } from "@/lib/backend-authority";
+import { getFolderById } from "@/lib/telegram-store";
 import { sendPartToStorage, signPartToken, friendlyStorageError } from "@/lib/telegram-storage";
 import { sanitizeFileName, validateAnyFileType, validateFileType } from "@/lib/validation";
 import { checkRateLimit, getRetryAfterSec } from "@/lib/rate-limit";
-import { PART_UPLOAD_SIZE, MAX_FILE_SIZE_BYTES, MAX_UPLOAD_PARTS } from "@/lib/upload-config";
+import { PART_UPLOAD_SIZE, MAX_UPLOAD_PARTS } from "@/lib/upload-config";
 
 export const maxDuration = 60;
 
@@ -14,8 +15,14 @@ function noStore(res: NextResponse): NextResponse {
 }
 
 export async function POST(req: NextRequest) {
-  const user = await getCurrentUser();
-  if (!user) return noStore(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
+  let principal;
+  try {
+    principal = await authorizeRequest("storage:upload");
+  } catch (error) {
+    const failure = authorityErrorPayload(error);
+    return noStore(NextResponse.json(failure.body, { status: failure.status }));
+  }
+  const user = principal.user;
 
   try {
     checkRateLimit(user.id, "uploadPart");
@@ -62,7 +69,25 @@ export async function POST(req: NextRequest) {
   const count = Number(form.get("count"));
   const totalSize = Number(form.get("size"));
   const mimeType = String(form.get("mimeType") ?? file.type ?? "");
-  const allowAny = form.get("allowAny") === "1";
+  const sourceRaw = String(form.get("source") ?? "gallery");
+  const folderIdRaw = form.get("folderId");
+  const folderId = folderIdRaw === null || folderIdRaw === "" || folderIdRaw === "root" ? null : String(folderIdRaw);
+  if (folderId && !/^[a-zA-Z0-9_-]{6,64}$/.test(folderId)) {
+    return noStore(NextResponse.json({ error: "Invalid folderId" }, { status: 400 }));
+  }
+  if (folderId && !(await getFolderById(user.id, folderId))) {
+    return noStore(NextResponse.json({ error: "Target folder not found" }, { status: 404 }));
+  }
+  if (sourceRaw === "admin" && !principal.isAdmin) {
+    return noStore(NextResponse.json({ error: "Forbidden" }, { status: 403 }));
+  }
+  const source: "gallery" | "files" | "admin" =
+    sourceRaw === "admin" && principal.isAdmin
+      ? "admin"
+      : sourceRaw === "files" || folderId
+        ? "files"
+        : "gallery";
+  const allowAny = source !== "gallery";
 
   let safeName: string;
   try {
@@ -80,7 +105,7 @@ export async function POST(req: NextRequest) {
     index < 0 ||
     index >= count ||
     totalSize <= 0 ||
-    totalSize > MAX_FILE_SIZE_BYTES
+    totalSize > principal.authority.entitlements.maxUploadBytes
   ) {
     return noStore(NextResponse.json({ error: "Invalid part metadata" }, { status: 400 }));
   }
@@ -116,10 +141,16 @@ export async function POST(req: NextRequest) {
     const token = signPartToken({
       sub: user.id,
       uploadId,
+      name: safeName,
+      mimeType: mimeType || "application/octet-stream",
+      totalSize,
+      partCount: count,
       fileId,
       messageId,
       size: file.size,
       order: index,
+      source,
+      folderId,
       exp: Math.floor(Date.now() / 1000) + 24 * 60 * 60,
     });
 

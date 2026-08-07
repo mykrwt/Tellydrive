@@ -32,18 +32,15 @@ Admin page) **or** its email is listed in `ADMIN_EMAILS` (comma-separated,
 case-insensitive). To bootstrap the **first** admin (no admin exists yet to do
 the promoting):
 
-1. **CLI, takes effect immediately (no redeploy):**
-   ```bash
-   node scripts/set-admin.mjs you@example.com
-   # or: npm run make-admin -- you@example.com  (use --demote to revoke)
-   ```
-   Run it from the repo root with `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` in
-   the environment or in `.env` / `.env.local`. It edits the role directly in
-   the Telegram-backed database (or the local `.data/auth.json` dev fallback
-   when those vars are unset).
-2. **Env var:** set `ADMIN_EMAILS=you@example.com` (comma-separated list works),
-   then redeploy/restart. The account keeps admin rights only while its email
-   stays in the list.
+1. **CLI, takes effect immediately (no redeploy):** pass the exact email of an
+   existing account to `node scripts/set-admin.mjs` (or `npm run make-admin --`;
+   add `--demote` to revoke). Run it from the repo root with the private backend
+   Telegram variables loaded from the server environment. It edits the role
+   directly in the backend database (or the local `.data/auth.json` development
+   fallback when backend Telegram is intentionally unconfigured).
+2. **Env var:** set `ADMIN_EMAILS` in the backend secret manager to the exact
+   comma-separated account emails, then redeploy/restart. The account keeps
+   admin rights only while its email stays in the list.
 
 Afterwards the **Admin** section appears in the dashboard navigation
 (`/dashboard/admin`) — no re-login needed.
@@ -57,23 +54,25 @@ npm run dev
 
 Open <http://localhost:3000>. Without Telegram variables, development uses `.data/auth.json` automatically.
 
-## Connect Telegram for production
+## Connect private backend Telegram infrastructure for production
 
-1. Create a bot with [@BotFather](https://t.me/BotFather) and copy its token.
+> This setup is **System A (operator/admin only)**. Its bots, channels, IDs,
+> sessions, and environment values must never be sent to a browser or mobile
+> client. See [`docs/TELEGRAM_ARCHITECTURE.md`](docs/TELEGRAM_ARCHITECTURE.md)
+and [`docs/BACKEND_AUTHORITY.md`](docs/BACKEND_AUTHORITY.md).
+
+1. Create a private backend bot with [@BotFather](https://t.me/BotFather) and copy its token into the backend secret manager.
 2. Create a **private channel or supergroup dedicated to TellyDrive** (basic groups are not supported).
 3. Add the bot as an administrator with permission to:
    - **Post Messages** (to upload database revisions)
    - **Edit Chat Info** ("Change Channel Info" / "Change Group Info", so the bot can update the `TBAUTH:<file_id>` pointer in the description)
-4. Obtain the numeric chat id (channel and supergroup ids start with `-100`, e.g., `-1001234567890`).
-5. In Vercel or your `.env` file, add:
+4. Obtain the numeric channel or supergroup ID and store it only in the backend secret manager.
+5. Configure the server-only variable names documented in [`.env.example`](.env.example) using the exact private values issued for your infrastructure.
 
-```env
-TELEGRAM_BOT_TOKEN=123456:your_bot_token
-TELEGRAM_CHAT_ID=-1001234567890
-SESSION_SECRET=optional_random_32_byte_secret
-```
-
-`SESSION_SECRET` is recommended; if absent, the server derives session signatures from the bot token. Never prefix Telegram variables with `NEXT_PUBLIC_`. Do not wrap values in quotes or include a `bot` prefix in `TELEGRAM_BOT_TOKEN`.
+Never prefix Telegram infrastructure variables with `NEXT_PUBLIC_`, place them
+in Flutter build defines, or include them in an APK. `SESSION_SECRET` is
+recommended; if absent, the backend currently derives session signatures from
+the private backend bot token.
 
 The app uploads `tellydrive-auth-rN.json` to the private chat and saves the latest Telegram `file_id` in the chat description as `TBAUTH:<file_id>`.
 
@@ -87,10 +86,25 @@ The app uploads `tellydrive-auth-rN.json` to the private chat and saves the late
 ## Verify
 
 ```bash
+npm run security:telegram-boundaries
 npm run lint
 npm run build
 ```
 
 ## Security notes
 
-Telegram credentials stay in server-only modules. The stored database contains profile fields, timestamps, password salts, and scrypt hashes—never plaintext passwords. For a high-risk production system, add distributed rate limiting, email verification, password recovery, and MFA or use a dedicated authentication provider.
+Private Telegram infrastructure credentials stay in server-only modules. All
+file and thumbnail bytes are fetched through authenticated same-origin backend
+proxies; Telegram Bot API URLs and storage identifiers are never returned to a
+client. Upload-part capabilities use authenticated encryption so their internal
+storage metadata cannot be decoded by users.
+
+A future user Telegram login is a separate identity signal only. It cannot
+assign roles, subscriptions, trusted-device status, or backend permissions.
+Every privileged operation remains subject to backend authentication,
+authorization, ownership checks, and rate limiting.
+
+The stored database contains profile fields, timestamps, password salts, and
+scrypt hashes—never plaintext passwords. For a high-risk production system, add
+distributed rate limiting, email verification, password recovery, and MFA or
+use a dedicated authentication provider.

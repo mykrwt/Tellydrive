@@ -1,1 +1,58 @@
+workflows:
+  tellybase-android:
+    name: TellyBase Android Release
+    max_build_duration: 60
+    instance_type: mac_mini_m2
 
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      groups:
+        - tellybase_secrets
+      vars:
+        PACKAGE_NAME: app.tellybase
+
+    cache:
+      cache_paths:
+        - $FLUTTER_ROOT/.pub-cache
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper/dists
+
+    scripts:
+      - name: Get dependencies
+        script: |
+          flutter pub get
+
+      - name: Ensure Android project
+        script: |
+          flutter create . --platforms android --org app.tellybase --project-name tellybase || true
+
+      - name: Analyze
+        script: |
+          flutter analyze
+
+      - name: Run tests
+        script: |
+          flutter test
+
+      - name: Build Release APK
+        script: |
+          flutter build apk --release \
+            --dart-define=TELEGRAM_API_ID=$TELEGRAM_API_ID \
+            --dart-define=TELEGRAM_API_HASH=$TELEGRAM_API_HASH
+
+      - name: Build Release AAB
+        script: |
+          flutter build appbundle --release \
+            --dart-define=TELEGRAM_API_ID=$TELEGRAM_API_ID \
+            --dart-define=TELEGRAM_API_HASH=$TELEGRAM_API_HASH
+
+    artifacts:
+      - build/app/outputs/flutter-apk/app-release.apk
+      - build/app/outputs/bundle/release/app-release.aab
+
+    publishing:
+      email:
+        recipients:
+          - build@tellybase.app

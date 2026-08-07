@@ -92,6 +92,7 @@ async function main() {
     "lib/server/admin-identity.ts",
     "lib/server/admin-telegram-config.ts",
     "lib/server/admin-bot-gateway.ts",
+    "lib/server/admin-bot-outbound.ts",
     "lib/server/admin-console.ts",
     "lib/telegram-storage.ts",
     "lib/telegram-store.ts",
@@ -119,11 +120,14 @@ async function main() {
     // Admin-console bot routes use the signed bridge gateway instead of
     // cookie sessions; every other API route must use the session gate.
     const isAdminBotGateway = relative.startsWith("app/api/admin-bot/");
+    const isAdminBotWebhook = relative === "app/api/admin-bot/webhook/route.ts";
     const hasBackendGate = isPublicAuthEntry
       ? /assert(?:IdentityCanStartSession|PublicSignupAllowed)/.test(source)
-      : isAdminBotGateway
-        ? /authorizeAdminBotRequest\(/.test(source)
-        : /authorizeRequest\(/.test(source);
+      : isAdminBotWebhook
+        ? /constantTimeEqual\(/.test(source) && /isAuthorizedAdminTelegramId\(/.test(source) && /executeBotOutboundBatch\(/.test(source)
+        : isAdminBotGateway
+          ? /authorizeAdminBotRequest\(/.test(source)
+          : /authorizeRequest\(/.test(source);
     if (!hasBackendGate) findings.push(`${relative}:1 — API route is missing a backend authority gate`);
   }
 
@@ -148,6 +152,16 @@ async function main() {
   for (const [relative, requiredPattern] of authorityCriticalFiles) {
     const source = await readFile(path.join(root, relative), "utf8");
     if (!requiredPattern.test(source)) findings.push(`${relative}:1 — protected server entry is missing backend authority`);
+  }
+
+  // Webhook-mode specific checks (direct Telegram delivery, no bridge)
+  try {
+    const webhookSource = await readFile(path.join(root, "app/api/admin-bot/webhook/route.ts"), "utf8");
+    if (!/x-telegram-bot-api-secret-token/i.test(webhookSource)) findings.push("app/api/admin-bot/webhook/route.ts:1 — webhook route missing Telegram secret-token header verification");
+    if (!/isAuthorizedAdminTelegramId\(/.test(webhookSource)) findings.push("app/api/admin-bot/webhook/route.ts:1 — webhook route missing admin allowlist enforcement");
+    if (!/executeBotOutboundBatch\(/.test(webhookSource)) findings.push("app/api/admin-bot/webhook/route.ts:1 — webhook route missing backend outbound execution");
+  } catch {
+    findings.push("app/api/admin-bot/webhook/route.ts:1 — webhook route file missing");
   }
 
   const fileRouteSource = await readFile(path.join(root, "app/api/files/[id]/route.ts"), "utf8");

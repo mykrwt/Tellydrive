@@ -134,3 +134,7 @@ The stored database contains profile fields, timestamps, password salts, and
 scrypt hashes—never plaintext passwords. For a high-risk production system, add
 distributed rate limiting, email verification, password recovery, and MFA or
 use a dedicated authentication provider.
+
+---
+
+**Admin Bot webhook (production):** `npm run admin-bot:webhook -- <url>` configures Telegram to push to `/api/admin-bot/webhook`. The site answers the bot directly (`executeBotOutboundBatch`). No bridge / VPS required. Use `npm run admin-bot:webhook-unset` to return to local bridge mode.

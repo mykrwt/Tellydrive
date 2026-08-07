@@ -2,6 +2,10 @@
 
 A complete private cloud storage and credentials experience for Next.js 16 with a private Telegram chat acting as the production storage & account database.
 
+> **New here?** Start with the plain-language walkthrough:
+> [`docs/GO_LIVE_GUIDE.md`](docs/GO_LIVE_GUIDE.md) — hosting, env setup,
+> building the app, and using the Telegram admin bot, step by step.
+
 ## Features
 
 - Sign up, sign in, remember-me sessions, protected dashboard, and sign out

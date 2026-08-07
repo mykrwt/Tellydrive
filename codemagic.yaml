@@ -8,11 +8,21 @@ workflows:
         - tellybase_secrets
 
     scripts:
-      - flutter pub get
+      - name: Clean
+        script: flutter clean
 
-      - flutter build apk --release \
-          --dart-define=TELEGRAM_API_ID=$TELEGRAM_API_ID \
-          --dart-define=TELEGRAM_API_HASH=$TELEGRAM_API_HASH
+      - name: Flutter pub get
+        script: flutter pub get
+
+      - name: Write local.properties
+        script: |
+          echo "flutter.sdk=$FLUTTER_ROOT" > android/local.properties
+          echo "flutter.versionName=1.0.0" >> android/local.properties
+          echo "flutter.versionCode=1" >> android/local.properties
+          cat android/local.properties
+
+      - name: Build release APK
+        script: flutter build apk --release --target=lib/main.dart --dart-define=TELEGRAM_API_ID=$TELEGRAM_API_ID --dart-define=TELEGRAM_API_HASH=$TELEGRAM_API_HASH
 
     artifacts:
       - build/app/outputs/flutter-apk/app-release.apk

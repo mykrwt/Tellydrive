@@ -102,3 +102,7 @@ client configuration, test fixtures, or build artifacts.
 - Does `npm run security:client-secrets` pass?
 
 A “yes” to either of the first three questions blocks release.
+
+### Webhook delivery mode (production)
+
+When `setWebhook` is configured, Telegram delivers updates via HTTPS POST directly to `/api/admin-bot/webhook`. The backend verifies `X-Telegram-Bot-Api-Secret-Token` (constant-time), checks `TELEGRAM_ADMIN_IDS`, deduplicates `update_id`, applies rate limits, runs `handleAdminBotUpdate()`, and executes replies via `executeBotOutboundBatch()`. No bridge process is required.

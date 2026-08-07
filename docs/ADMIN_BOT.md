@@ -153,3 +153,18 @@ message users directly.
 - `TELEGRAM_ADMIN_IDS` and `ADMIN_BOT_SHARED_SECRET` are backend-only
   credentials. Never prefix them with `NEXT_PUBLIC_`, place them in Flutter
   build defines, or include them in an APK.
+
+## Webhook mode (production — no bridge, no VPS)
+
+After deploy, run ONCE:
+
+```bash
+npm run admin-bot:webhook -- https://your-site.example
+```
+
+Telegram then pushes updates straight to `/api/admin-bot/webhook`; the site answers the bot directly via `executeBotOutboundBatch`. Nothing runs on your computer.
+
+Requirements:
+- Public HTTPS URL (free on Vercel / Netlify / Railway).
+- `ADMIN_BOT_SHARED_SECRET` is the webhook secret token — backend-only, never in APK / `NEXT_PUBLIC_`.
+- The bridge (`npm run admin-bot`) is ONLY for local dev. Before using it, run `npm run admin-bot:webhook-unset` because Telegram allows one delivery method per bot.

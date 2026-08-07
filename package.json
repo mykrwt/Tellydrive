@@ -11,7 +11,9 @@
     "security:backend-authority": "node scripts/check-telegram-boundaries.mjs",
     "check": "npm run security:backend-authority && npm run lint && npm run build",
     "make-admin": "node scripts/set-admin.mjs",
-    "admin-bot": "node scripts/admin-bot.mjs"
+    "admin-bot": "node scripts/admin-bot.mjs",
+    "admin-bot:webhook": "node scripts/set-admin-bot-webhook.mjs",
+    "admin-bot:webhook-unset": "node scripts/set-admin-bot-webhook.mjs --unset"
   },
   "dependencies": {
     "@react-three/fiber": "^9.7.0",

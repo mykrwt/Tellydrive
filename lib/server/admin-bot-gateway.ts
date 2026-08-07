@@ -2,7 +2,7 @@ import "server-only";
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { NextRequest } from "next/server";
-import { isAuthorizedAdminTelegramId, getAdminBotSharedSecret } from "@/lib/server/admin-telegram-config";
+import { isAuthorizedAdminTelegramId, getAdminBotSharedSecret, getAdminBotTelegramConfig } from "@/lib/server/admin-telegram-config";
 import { checkRateLimit } from "@/lib/rate-limit";
 
 /**
@@ -120,6 +120,13 @@ export function senderOf(update: AdminBotUpdate): { id: number; name: string } |
  * Validate the signed bridge request and the operator identity behind it.
  * Throws AdminBotGatewayError with an HTTP status on every failure path.
  */
+export function claimAdminBotUpdateId(updateId: number): boolean {
+  const botId = getAdminBotTelegramConfig().token
+    ? `bot:${getAdminBotTelegramConfig().token.slice(0, 12)}`
+    : "admin-bot";
+  return rememberUpdateId(botId, updateId);
+}
+
 export async function authorizeAdminBotRequest(request: NextRequest): Promise<AdminBotPrincipal> {
   const rawBody = await request.text();
   if (!rawBody) throw new AdminBotGatewayError(400, "Empty request body.");

@@ -131,8 +131,7 @@ enough.
 1. Push this repo to GitHub (already done).
 2. **Vercel:** go to vercel.com → New Project → import `mykrwt/Tellybase`.
    Vercel will build and host it for free.
-   ⚠️ The admin-bot bridge can't run on Vercel (it needs a program running
-   forever) — run the bridge on your own computer or a tiny VPS (Step 4).
+   ⚠️ The admin-bot bridge can't run on Vercel (needs a persistent process) — use webhook mode (Step 4) on Vercel; the bridge is ONLY for local dev.
 3. Put the environment variables in the host's dashboard:
    - Vercel: Project → Settings → Environment Variables → add the 6 values.
    - Railway/Render: same idea, "Variables" tab.
@@ -161,11 +160,28 @@ enough.
 
 ---
 
-## Step 4 — Run the Admin Bot bridge
+## Step 4 — Admin Bot delivery (webhook production / bridge local)
 
-The bridge is the little program that listens to your Admin Bot and talks to
-your website. It must run on something that stays on while you want to use the
-bot (your laptop is fine while you're testing; a VPS is better long-term).
+### Production (recommended — no bridge, no VPS)
+
+Run ONE command after deploy (the bot must be configured with `TELEGRAM_ADMIN_BOT_TOKEN` and `ADMIN_BOT_SHARED_SECRET`):
+
+```bash
+npm run admin-bot:webhook -- https://your-site.example
+```
+
+Telegram pushes updates to `/api/admin-bot/webhook`; the site answers directly.
+Before using the bridge locally, unset the webhook first (Telegram allows only one method):
+
+```bash
+npm run admin-bot:webhook-unset
+```
+
+### Local dev — bridge only
+
+The bridge (`npm run admin-bot`) is ONLY for local development. It requires `npm run admin-bot:webhook-unset` first.
+
+Keep it running in a separate terminal (your laptop or a tiny VPS). It must reach both Telegram and the backend (`ADMIN_BOT_API_URL`).
 
 1. On that machine, in the repo:
    ```bash

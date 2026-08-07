@@ -8,9 +8,6 @@ build/
 coverage/
 android/.gradle/
 android/captures/
-android/gradlew
-android/gradlew.bat
-android/gradle/wrapper/gradle-wrapper.jar
 android/local.properties
 android/key.properties
 android/**/*.keystore

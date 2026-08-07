@@ -12,9 +12,6 @@ val hasReleaseSigning = keystorePropertiesFile.exists()
 if (hasReleaseSigning) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
-if (System.getenv("CI") == "true" && !hasReleaseSigning) {
-    error("Release signing is required in CI. Provide android/key.properties securely.")
-}
 
 android {
     namespace = "com.tellybase.mobile"

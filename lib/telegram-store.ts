@@ -105,6 +105,72 @@ export type SystemAuthorityState = {
   maintenance: MaintenanceState;
 };
 
+// ── Admin console domain (System A, backend-owned) ──
+
+export type AppReleaseStatus = "draft" | "published" | "archived";
+
+export type AppRelease = {
+  id: string;
+  fileName: string;
+  size: number;
+  versionName: string;
+  versionCode: number;
+  notes: string | null;
+  sha256: string;
+  status: AppReleaseStatus;
+  createdAt: string;
+  publishedAt: string | null;
+  // System A storage references — never serialized to clients.
+  storageFileId: string;
+  storageMessageId: number;
+  storageChunked?: boolean;
+  storageChunks?: ChunkMeta[];
+  storageChunkSize?: number;
+};
+
+export type Announcement = {
+  message: string;
+  updatedAt: string;
+};
+
+export type ActivityEntry = {
+  id: string;
+  at: string;
+  actor: string; // "system" | "telegram:<id>" | "user:<id>" | "admin:<id>"
+  action: string; // namespaced, e.g. "user.ban", "release.publish"
+  target: string | null; // resource reference (email, user id, release id…)
+  detail: string | null; // short human-readable detail
+};
+
+export type AdminAnalytics = {
+  totals: {
+    users: number;
+    files: number;
+    folders: number;
+    bytes: number;
+    images: number;
+    videos: number;
+    documents: number;
+    imagesBytes: number;
+    videosBytes: number;
+    documentsBytes: number;
+  };
+  admins: number;
+  banned: number;
+  suspended: number;
+  premiumActive: number;
+  newUsers7d: number;
+  newUsers30d: number;
+  logins7d: number;
+  logins30d: number;
+  uploads7d: number;
+  uploads30d: number;
+  signupsPerDay: Array<{ day: string; count: number }>;
+  topUsers: Array<{ id: string; name: string; email: string; bytes: number; fileCount: number }>;
+  publishedRelease: { versionName: string; versionCode: number; publishedAt: string } | null;
+  recentActivity: ActivityEntry[];
+};
+
 type AuthDatabase = {
   version: 1;
   revision: number;
@@ -114,6 +180,9 @@ type AuthDatabase = {
   folders: StoredFolder[];
   albums?: StoredAlbum[];
   system?: SystemAuthorityState;
+  releases?: AppRelease[];
+  announcements?: Announcement[];
+  activityLog?: ActivityEntry[];
 };
 
 type TelegramResponse<T> = { ok: true; result: T } | { ok: false; description?: string };
@@ -140,6 +209,8 @@ function defaultSystemAuthorityState(): SystemAuthorityState {
   };
 }
 
+const ACTIVITY_LOG_MAX = 500;
+
 function emptyDatabase(): AuthDatabase {
   return {
     version: 1,
@@ -150,6 +221,9 @@ function emptyDatabase(): AuthDatabase {
     folders: [],
     albums: [],
     system: defaultSystemAuthorityState(),
+    releases: [],
+    announcements: [],
+    activityLog: [],
   };
 }
 
@@ -224,6 +298,44 @@ function normalizeSystemAuthorityState(value: unknown): SystemAuthorityState {
   };
 }
 
+function isAppRelease(value: unknown): value is AppRelease {
+  if (!value || typeof value !== "object") return false;
+  const release = value as Record<string, unknown>;
+  return (
+    typeof release.id === "string" &&
+    typeof release.fileName === "string" &&
+    typeof release.size === "number" &&
+    typeof release.versionName === "string" &&
+    typeof release.versionCode === "number" &&
+    (release.notes === null || typeof release.notes === "string") &&
+    typeof release.sha256 === "string" &&
+    ["draft", "published", "archived"].includes(String(release.status)) &&
+    typeof release.createdAt === "string" &&
+    (release.publishedAt === null || typeof release.publishedAt === "string") &&
+    typeof release.storageFileId === "string" &&
+    typeof release.storageMessageId === "number"
+  );
+}
+
+function isAnnouncement(value: unknown): value is Announcement {
+  if (!value || typeof value !== "object") return false;
+  const announcement = value as Record<string, unknown>;
+  return typeof announcement.message === "string" && typeof announcement.updatedAt === "string";
+}
+
+function isActivityEntry(value: unknown): value is ActivityEntry {
+  if (!value || typeof value !== "object") return false;
+  const entry = value as Record<string, unknown>;
+  return (
+    typeof entry.id === "string" &&
+    typeof entry.at === "string" &&
+    typeof entry.actor === "string" &&
+    typeof entry.action === "string" &&
+    (entry.target === null || typeof entry.target === "string") &&
+    (entry.detail === null || typeof entry.detail === "string")
+  );
+}
+
 function isStoredFile(value: unknown): value is StoredFile {
   if (!value || typeof value !== "object") return false;
   const file = value as Record<string, unknown>;
@@ -281,6 +393,11 @@ function parseDatabase(raw: string): AuthDatabase {
     folders: Array.isArray(db.folders) ? db.folders : [],
     albums: Array.isArray(db.albums) ? db.albums : [],
     system: normalizeSystemAuthorityState(db.system),
+    releases: Array.isArray(db.releases) ? db.releases.filter(isAppRelease) : [],
+    announcements: Array.isArray(db.announcements) ? db.announcements.filter(isAnnouncement) : [],
+    activityLog: Array.isArray(db.activityLog)
+      ? db.activityLog.filter(isActivityEntry).slice(-ACTIVITY_LOG_MAX)
+      : [],
   };
   if (hadLegacyUserCredentials) {
     Object.defineProperty(parsed, LEGACY_USER_CREDENTIALS_REMOVED, { value: true });
@@ -476,11 +593,32 @@ export async function findUserById(id: string): Promise<StoredUser | null> {
     return database.users.find((user) => user.id === id) ?? null;
   });
 }
+function pushActivity(
+  database: AuthDatabase,
+  entry: { actor: string; action: string; target?: string | null; detail?: string | null },
+): void {
+  const now = new Date().toISOString();
+  database.activityLog = database.activityLog ?? [];
+  database.activityLog.push({
+    id: randomUUID(),
+    at: now,
+    actor: entry.actor ?? "system",
+    action: entry.action,
+    target: entry.target ?? null,
+    detail: entry.detail ? String(entry.detail).slice(0, 240) : null,
+  });
+  // Keep the audit trail bounded.
+  if (database.activityLog.length > ACTIVITY_LOG_MAX) {
+    database.activityLog = database.activityLog.slice(-ACTIVITY_LOG_MAX);
+  }
+}
+
 export async function createUser(user: StoredUser): Promise<void> {
   return serialized(async () => {
     const database = await load();
     if (database.users.some((entry) => entry.email === user.email)) throw new AccountStoreError("An account with that email already exists.");
     database.users.push(user);
+    pushActivity(database, { actor: "system", action: "user.signup", target: user.email });
     database.revision += 1;
     database.updatedAt = new Date().toISOString();
     await save(database);
@@ -492,6 +630,7 @@ export async function markLogin(id: string): Promise<void> {
     const user = database.users.find((entry) => entry.id === id);
     if (!user) return;
     user.lastLoginAt = new Date().toISOString();
+    pushActivity(database, { actor: `user:${id}`, action: "auth.login", target: user.email });
     database.revision += 1;
     database.updatedAt = new Date().toISOString();
     await save(database);
@@ -620,6 +759,12 @@ export async function addFile(file: StoredFile): Promise<void> {
   return serialized(async () => {
     const database = await load();
     database.files.push(file);
+    pushActivity(database, {
+      actor: `user:${file.userId}`,
+      action: "file.upload",
+      target: file.id,
+      detail: file.name.slice(0, 80),
+    });
     database.revision += 1;
     database.updatedAt = new Date().toISOString();
     await save(database);
@@ -848,7 +993,11 @@ export async function getSystemAuthorityState(): Promise<SystemAuthorityState> {
   });
 }
 
-export async function setMaintenanceState(enabled: boolean, message: string | null): Promise<SystemAuthorityState> {
+export async function setMaintenanceState(
+  enabled: boolean,
+  message: string | null,
+  actor = "system",
+): Promise<SystemAuthorityState> {
   return serialized(async () => {
     const database = await load();
     const next: SystemAuthorityState = {
@@ -859,6 +1008,11 @@ export async function setMaintenanceState(enabled: boolean, message: string | nu
       },
     };
     database.system = next;
+    pushActivity(database, {
+      actor,
+      action: enabled ? "system.maintenance_on" : "system.maintenance_off",
+      detail: next.maintenance.message ?? undefined,
+    });
     database.revision += 1;
     database.updatedAt = new Date().toISOString();
     await save(database);
@@ -876,7 +1030,11 @@ export type UserAuthorityPatch = {
   };
 };
 
-export async function updateUserAuthorityPolicy(userId: string, patch: UserAuthorityPatch): Promise<void> {
+export async function updateUserAuthorityPolicy(
+  userId: string,
+  patch: UserAuthorityPatch,
+  actor = "system",
+): Promise<void> {
   return serialized(async () => {
     const database = await load();
     const user = database.users.find((entry) => entry.id === userId);
@@ -891,6 +1049,18 @@ export async function updateUserAuthorityPolicy(userId: string, patch: UserAutho
         expiresAt: patch.subscription.expiresAt ?? null,
         updatedAt: now,
       };
+    }
+    const changed: string[] = [];
+    if (patch.accountStatus) changed.push(`account=${patch.accountStatus}`);
+    if (patch.storageAccess) changed.push(`storage=${patch.storageAccess}`);
+    if (patch.subscription) changed.push(`plan=${patch.subscription.tier}/${patch.subscription.status}`);
+    if (changed.length) {
+      pushActivity(database, {
+        actor,
+        action: "user.policy",
+        target: user.email,
+        detail: changed.join(" "),
+      });
     }
     database.revision += 1;
     database.updatedAt = now;
@@ -963,14 +1133,329 @@ export async function getAdminOverview(): Promise<AdminOverview> {
   });
 }
 
-export async function setUserRole(userId: string, role: "admin" | "user"): Promise<void> {
+export async function setUserRole(userId: string, role: "admin" | "user", actor = "system"): Promise<void> {
   return serialized(async () => {
     const database = await load();
     const user = database.users.find((u) => u.id === userId);
     if (!user) throw new AccountStoreError("User not found.");
     user.role = role;
+    pushActivity(database, {
+      actor,
+      action: role === "admin" ? "user.make_admin" : "user.remove_admin",
+      target: user.email,
+    });
     database.revision += 1;
     database.updatedAt = new Date().toISOString();
     await save(database);
+  });
+}
+
+// ── Admin console: releases (APK versions) ──
+
+export type NewAppRelease = {
+  fileName: string;
+  size: number;
+  versionName: string;
+  versionCode: number;
+  notes: string | null;
+  sha256: string;
+  storageFileId: string;
+  storageMessageId: number;
+  storageChunked?: boolean;
+  storageChunks?: ChunkMeta[];
+  storageChunkSize?: number;
+};
+
+export async function addRelease(input: NewAppRelease, actor = "system"): Promise<AppRelease> {
+  return serialized(async () => {
+    const database = await load();
+    const now = new Date().toISOString();
+    const release: AppRelease = {
+      id: randomUUID(),
+      fileName: input.fileName,
+      size: input.size,
+      versionName: input.versionName,
+      versionCode: input.versionCode,
+      notes: input.notes ?? null,
+      sha256: input.sha256,
+      status: "draft",
+      createdAt: now,
+      publishedAt: null,
+      storageFileId: input.storageFileId,
+      storageMessageId: input.storageMessageId,
+      storageChunked: input.storageChunked,
+      storageChunks: input.storageChunks,
+      storageChunkSize: input.storageChunkSize,
+    };
+    database.releases = database.releases ?? [];
+    database.releases.push(release);
+    pushActivity(database, {
+      actor,
+      action: "release.upload",
+      target: release.id,
+      detail: `${release.fileName} v${release.versionName} (code ${release.versionCode})`,
+    });
+    database.revision += 1;
+    database.updatedAt = now;
+    await save(database);
+    return release;
+  });
+}
+
+export async function getReleases(limit = 20): Promise<AppRelease[]> {
+  return serialized(async () => {
+    const database = await load();
+    return (database.releases ?? [])
+      .slice()
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, limit);
+  });
+}
+
+export async function getReleaseById(id: string): Promise<AppRelease | null> {
+  return serialized(async () => {
+    const database = await load();
+    return database.releases?.find((release) => release.id === id) ?? null;
+  });
+}
+
+export async function getLatestPublishedRelease(): Promise<AppRelease | null> {
+  return serialized(async () => {
+    const database = await load();
+    const published = (database.releases ?? []).filter((release) => release.status === "published");
+    if (!published.length) return null;
+    return published.sort((a, b) => b.versionCode - a.versionCode)[0];
+  });
+}
+
+export async function updateReleaseDetails(
+  id: string,
+  patch: { versionName?: string; versionCode?: number; notes?: string | null },
+  actor = "system",
+): Promise<AppRelease> {
+  return serialized(async () => {
+    const database = await load();
+    const release = database.releases?.find((entry) => entry.id === id);
+    if (!release) throw new AccountStoreError("Release not found.");
+    const now = new Date().toISOString();
+    const name = patch.versionName === undefined ? release.versionName : patch.versionName.trim().slice(0, 40);
+    const code = patch.versionCode === undefined ? release.versionCode : patch.versionCode;
+    if (!name) throw new AccountStoreError("Version name cannot be empty.");
+    if (!Number.isInteger(code) || code < 0) throw new AccountStoreError("Version code must be a non-negative integer.");
+    release.versionName = name;
+    release.versionCode = code;
+    if (patch.notes !== undefined) {
+      release.notes = typeof patch.notes === "string" ? patch.notes.trim().slice(0, 500) || null : null;
+    }
+    pushActivity(database, {
+      actor,
+      action: "release.update",
+      target: release.id,
+      detail: `${release.fileName} v${release.versionName} (code ${release.versionCode})`,
+    });
+    database.revision += 1;
+    database.updatedAt = now;
+    await save(database);
+    return release;
+  });
+}
+
+export async function publishRelease(id: string, publish: boolean, actor = "system"): Promise<AppRelease> {
+  return serialized(async () => {
+    const database = await load();
+    const release = database.releases?.find((entry) => entry.id === id);
+    if (!release) throw new AccountStoreError("Release not found.");
+    const now = new Date().toISOString();
+    if (publish) {
+      // Only one release is live at a time; publishing retires the previous one.
+      for (const entry of database.releases ?? []) {
+        if (entry.id !== id && entry.status === "published") entry.status = "archived";
+      }
+      release.status = "published";
+      release.publishedAt = now;
+      pushActivity(database, {
+        actor,
+        action: "release.publish",
+        target: release.id,
+        detail: `v${release.versionName} (code ${release.versionCode})`,
+      });
+    } else {
+      release.status = "draft";
+      release.publishedAt = null;
+      pushActivity(database, {
+        actor,
+        action: "release.unpublish",
+        target: release.id,
+        detail: `v${release.versionName} (code ${release.versionCode})`,
+      });
+    }
+    database.revision += 1;
+    database.updatedAt = now;
+    await save(database);
+    return release;
+  });
+}
+
+export async function deleteRelease(id: string, actor = "system"): Promise<void> {
+  return serialized(async () => {
+    const database = await load();
+    const release = database.releases?.find((entry) => entry.id === id);
+    if (!release) throw new AccountStoreError("Release not found.");
+    database.releases = (database.releases ?? []).filter((entry) => entry.id !== id);
+    pushActivity(database, {
+      actor,
+      action: "release.delete",
+      target: release.id,
+      detail: `${release.fileName} v${release.versionName}`,
+    });
+    database.revision += 1;
+    database.updatedAt = new Date().toISOString();
+    await save(database);
+  });
+}
+
+// ── Admin console: announcements ──
+
+export async function setAnnouncement(message: string, actor = "system"): Promise<Announcement> {
+  return serialized(async () => {
+    const database = await load();
+    const now = new Date().toISOString();
+    const cleaned = message.trim().slice(0, 1000);
+    if (!cleaned) throw new AccountStoreError("Announcement cannot be empty.");
+    database.announcements = [{ message: cleaned, updatedAt: now }];
+    pushActivity(database, { actor, action: "announcement.set", detail: cleaned.slice(0, 120) });
+    database.revision += 1;
+    database.updatedAt = now;
+    await save(database);
+    return { message: cleaned, updatedAt: now };
+  });
+}
+
+export async function clearAnnouncement(actor = "system"): Promise<void> {
+  return serialized(async () => {
+    const database = await load();
+    database.announcements = [];
+    pushActivity(database, { actor, action: "announcement.clear" });
+    database.revision += 1;
+    database.updatedAt = new Date().toISOString();
+    await save(database);
+  });
+}
+
+export async function getAnnouncement(): Promise<Announcement | null> {
+  return serialized(async () => {
+    const database = await load();
+    const list = database.announcements ?? [];
+    return list.length ? list[list.length - 1] : null;
+  });
+}
+
+// ── Admin console: activity log ──
+
+export async function getActivityLog(limit = 50): Promise<ActivityEntry[]> {
+  return serialized(async () => {
+    const database = await load();
+    return (database.activityLog ?? [])
+      .slice()
+      .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+      .slice(0, Math.max(1, Math.min(limit, ACTIVITY_LOG_MAX)));
+  });
+}
+
+export async function recordActivity(entry: Omit<ActivityEntry, "id" | "at">): Promise<void> {
+  return serialized(async () => {
+    const database = await load();
+    pushActivity(database, entry);
+    database.revision += 1;
+    database.updatedAt = new Date().toISOString();
+    await save(database);
+  });
+}
+
+// ── Admin console: analytics ──
+
+function startOfDayUtc(date: Date): number {
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+}
+
+export async function getAdminAnalytics(): Promise<AdminAnalytics> {
+  return serialized(async () => {
+    const database = await load();
+    const now = Date.now();
+    const day7 = now - 7 * 24 * 60 * 60 * 1000;
+    const day30 = now - 30 * 24 * 60 * 60 * 1000;
+
+    const totals = {
+      users: database.users.length,
+      files: database.files.length,
+      folders: database.folders.length,
+      bytes: database.files.reduce((sum, f) => sum + (f.size || 0), 0),
+      images: 0,
+      videos: 0,
+      documents: 0,
+      imagesBytes: 0,
+      videosBytes: 0,
+      documentsBytes: 0,
+    };
+    for (const file of database.files) {
+      const size = file.size || 0;
+      if (file.mimeType.startsWith("image/")) {
+        totals.images += 1;
+        totals.imagesBytes += size;
+      } else if (file.mimeType.startsWith("video/")) {
+        totals.videos += 1;
+        totals.videosBytes += size;
+      } else {
+        totals.documents += 1;
+        totals.documentsBytes += size;
+      }
+    }
+
+    const signupsPerDay: Array<{ day: string; count: number }> = [];
+    for (let offset = 6; offset >= 0; offset -= 1) {
+      const dayStart = startOfDayUtc(new Date(now - offset * 24 * 60 * 60 * 1000));
+      const count = database.users.filter((u) => {
+        const created = Date.parse(u.createdAt);
+        return Number.isFinite(created) && created >= dayStart && created < dayStart + 24 * 60 * 60 * 1000;
+      }).length;
+      signupsPerDay.push({ day: new Date(dayStart).toISOString().slice(0, 10), count });
+    }
+
+    const topUsers = database.users
+      .map((u) => {
+        const owned = database.files.filter((f) => f.userId === u.id);
+        return {
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          bytes: owned.reduce((sum, f) => sum + (f.size || 0), 0),
+          fileCount: owned.length,
+        };
+      })
+      .sort((a, b) => b.bytes - a.bytes)
+      .slice(0, 5);
+
+    const published = (database.releases ?? []).filter((r) => r.status === "published");
+    const latest = published.sort((a, b) => b.versionCode - a.versionCode)[0] ?? null;
+
+    return {
+      totals,
+      admins: database.users.filter((u) => u.role === "admin").length,
+      banned: database.users.filter((u) => u.accountStatus === "banned").length,
+      suspended: database.users.filter((u) => u.accountStatus === "suspended").length,
+      premiumActive: database.users.filter((u) => u.subscription?.tier === "premium" && u.subscription?.status === "active").length,
+      newUsers7d: database.users.filter((u) => Date.parse(u.createdAt) >= day7).length,
+      newUsers30d: database.users.filter((u) => Date.parse(u.createdAt) >= day30).length,
+      logins7d: database.users.filter((u) => u.lastLoginAt && Date.parse(u.lastLoginAt) >= day7).length,
+      logins30d: database.users.filter((u) => u.lastLoginAt && Date.parse(u.lastLoginAt) >= day30).length,
+      uploads7d: database.files.filter((f) => Date.parse(f.createdAt) >= day7).length,
+      uploads30d: database.files.filter((f) => Date.parse(f.createdAt) >= day30).length,
+      signupsPerDay,
+      topUsers,
+      publishedRelease: latest
+        ? { versionName: latest.versionName, versionCode: latest.versionCode, publishedAt: latest.publishedAt ?? latest.createdAt }
+        : null,
+      recentActivity: (database.activityLog ?? []).slice().sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()).slice(0, 10),
+    };
   });
 }

@@ -8,13 +8,28 @@ roles, or trust.
 
 System A is controlled only by the operator and runs only in trusted backend or
 administrative CLI processes. It includes private bots, Bot API credentials,
-channels, groups, account sessions, storage identifiers, update channels, and
-backend environment configuration.
+channels, groups, account sessions, storage identifiers, update channels, the
+private admin-console bot, and backend environment configuration.
+
+### Admin-console bot
+
+The private Telegram admin bot (`TELEGRAM_ADMIN_BOT_TOKEN`) is the operator's
+administration console (see [`docs/ADMIN_BOT.md`](ADMIN_BOT.md)). Its bridge
+process (`scripts/admin-bot.mjs`) is pure plumbing: it forwards signed updates
+to `POST /api/admin-bot/update` and executes the outbound Telegram calls the
+backend returns. The backend gateway verifies the HMAC signature, freshness,
+per-bot update dedupe, and the `TELEGRAM_ADMIN_IDS` operator allowlist before
+interpreting anything. All command parsing, menus, validation, and mutations
+happen in `lib/server/admin-console.ts` — never in the bridge. A Telegram
+identity alone grants nothing: it must pass the gateway's signature and
+allowlist checks, and every operation is still a validated backend store call.
 
 ### Boundary
 
 - `lib/server/admin-telegram-config.ts` is the application configuration gateway.
 - `lib/telegram-store.ts` and `lib/telegram-storage.ts` consume System A only.
+- `lib/server/admin-bot-gateway.ts` and `lib/server/admin-console.ts` are the
+  admin-console brain and run only behind the signed bridge gateway.
 - Browser and Flutter clients call authenticated TellyBase API routes only.
 - File, video, and thumbnail routes proxy bytes through the backend.
 - Telegram Bot API file URLs are private because they embed a bot token. They

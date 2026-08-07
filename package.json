@@ -10,7 +10,8 @@
     "security:telegram-boundaries": "node scripts/check-telegram-boundaries.mjs",
     "security:backend-authority": "node scripts/check-telegram-boundaries.mjs",
     "check": "npm run security:backend-authority && npm run lint && npm run build",
-    "make-admin": "node scripts/set-admin.mjs"
+    "make-admin": "node scripts/set-admin.mjs",
+    "admin-bot": "node scripts/admin-bot.mjs"
   },
   "dependencies": {
     "@react-three/fiber": "^9.7.0",

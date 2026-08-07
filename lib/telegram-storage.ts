@@ -281,6 +281,56 @@ export async function uploadToStorage(
   });
 }
 
+// ── APK release storage (admin console) ──
+// APKs arrive through the private Telegram admin-console bot, so the backend
+// can only ever download them via getFile, which the Bot API caps at 20 MB.
+// Releases are therefore capped at that same limit; a single sendDocument
+// (≤ 50 MB) stores the file without chunking.
+
+export const APK_MAX_UPLOAD_BYTES = 20 * 1024 * 1024; // Telegram Bot API download cap
+
+/** True when the bytes look like a ZIP/APK container (PK\x03\x04). */
+export function looksLikeApk(bytes: Uint8Array): boolean {
+  return bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && (bytes[2] === 0x03 || bytes[2] === 0x05 || bytes[2] === 0x07);
+}
+
+export async function uploadApkToStorage(originalName: string, blob: Blob): Promise<UploadResult> {
+  const name = sanitizeFileName(originalName);
+  if (!name.toLowerCase().endsWith(".apk")) {
+    throw new AccountStoreError("Only .apk files can be published as app releases.");
+  }
+  if (!Number.isFinite(blob.size) || blob.size <= 0) {
+    throw new AccountStoreError("Invalid APK file.");
+  }
+  if (blob.size > APK_MAX_UPLOAD_BYTES) {
+    throw new AccountStoreError(
+      `APK exceeds the ${Math.floor(APK_MAX_UPLOAD_BYTES / 1024 / 1024)} MB Telegram Bot API limit (file is ${(blob.size / 1024 / 1024).toFixed(1)} MB).`,
+    );
+  }
+  const head = new Uint8Array(await blob.slice(0, 8).arrayBuffer());
+  if (!looksLikeApk(head)) {
+    throw new AccountStoreError("The uploaded file is not a valid APK (ZIP) container.");
+  }
+
+  const globalStorage = getAdminStorageTelegramConfig();
+  const token = globalStorage.token;
+  const chatId = globalStorage.chatId;
+  const apiBase = globalStorage.apiBase;
+
+  if (!token || !chatId) {
+    if (databaseMode() === "local") {
+      const local = await saveLocalBlob(blob);
+      return { fileId: local.fileId, messageId: local.messageId, size: blob.size, chunked: false };
+    }
+    throw new AccountStoreError("Storage is not configured. Contact support.");
+  }
+
+  return queued(async () => {
+    const { fileId, messageId } = await telegramSendDocument(token, chatId, apiBase, blob, name, `TellyBase APK release · ${name}`);
+    return { fileId, messageId, size: blob.size, chunked: false };
+  });
+}
+
 // ── Resolved file URL cache ──
 // Every getFile call is a Telegram API round-trip with up to 15s worst-case
 // latency, and before this cache every single thumbnail/preview/render paid

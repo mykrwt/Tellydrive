@@ -11,3 +11,18 @@ export function isAdminIdentity(user: Pick<SafeUser, "id" | "email" | "role">): 
     .filter(Boolean);
   return emails.includes(user.email.toLowerCase());
 }
+
+/**
+ * The operator floor: accounts listed in ADMIN_EMAILS are the bootstrap
+ * administrators. They can never be banned, suspended, demoted, or stripped of
+ * storage through any admin channel (web dashboard or Telegram console), so
+ * the operator cannot lock themselves out.
+ */
+export function isOperatorFloorAccount(user: Pick<SafeUser, "email">): boolean {
+  const email = user.email.trim().toLowerCase();
+  return (process.env.ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)
+    .includes(email);
+}

@@ -2,6 +2,10 @@
 
 A complete private cloud storage and credentials experience for Next.js 16 with a private Telegram chat acting as the production storage & account database.
 
+> **New here?** Start with the plain-language walkthrough:
+> [`docs/GO_LIVE_GUIDE.md`](docs/GO_LIVE_GUIDE.md) — hosting, env setup,
+> building the app, and using the Telegram admin bot, step by step.
+
 ## Features
 
 - Sign up, sign in, remember-me sessions, protected dashboard, and sign out
@@ -24,6 +28,12 @@ A complete private cloud storage and credentials experience for Next.js 16 with 
 - **Admin** (`/dashboard/admin`) — administrator-only page with upload &
   file management, instance statistics (users, files, folders, storage),
   a user table with role management, and reserved slots for future admin tools.
+- **Telegram Admin Console** (Phase 4) — instead of a web dashboard, a private
+  Telegram bot is the operator's administration console: APK release uploads &
+  publishing, ban/unban, subscription changes, user list/search, statistics &
+  analytics, maintenance mode, in-app announcements, and an activity log.
+  The bot is a thin signed bridge to backend APIs — all business logic and
+  authority checks run server-side. See [`docs/ADMIN_BOT.md`](docs/ADMIN_BOT.md).
 
 ### Admin accounts
 
@@ -53,6 +63,22 @@ npm run dev
 ```
 
 Open <http://localhost:3000>. Without Telegram variables, development uses `.data/auth.json` automatically.
+
+## Telegram admin console (operator only)
+
+Run the backend, then in a second terminal:
+
+```bash
+npm run admin-bot
+```
+
+Requires `TELEGRAM_ADMIN_BOT_TOKEN`, `TELEGRAM_ADMIN_IDS`, and
+`ADMIN_BOT_SHARED_SECRET` (see [`.env.example`](.env.example) and
+[`docs/ADMIN_BOT.md`](docs/ADMIN_BOT.md)). The bridge polls the private admin
+bot and forwards signed updates to the backend gateway
+(`POST /api/admin-bot/update`), which validates the signature and that the
+sender is an authorized administrator before executing anything. The bridge
+contains no business logic.
 
 ## Connect private backend Telegram infrastructure for production
 

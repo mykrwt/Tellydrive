@@ -18,15 +18,18 @@ workflows:
     scripts:
       - name: Show tool versions
         script: |
+          cd tellybase_mobile
           flutter --version
           java -version
       - name: Get Flutter dependencies
         script: |
+          cd tellybase_mobile
           flutter pub get
       - name: Build APK
         script: |
+          cd tellybase_mobile
           flutter build apk --release
 
     artifacts:
-      - build/app/outputs/flutter-apk/*.apk
-      - build/app/outputs/apk/**/*.apk
+      - tellybase_mobile/build/app/outputs/flutter-apk/*.apk
+      - tellybase_mobile/build/app/outputs/apk/**/*.apk

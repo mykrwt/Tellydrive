@@ -21,7 +21,7 @@ dependencies:
   # --- Persistence ---------------------------------------------------------
   flutter_secure_storage: ^10.0.0   # Telegram session (auth keys) — secure
   shared_preferences: ^2.5.3        # non-sensitive prefs & small index cache
-  path_provider: ^1.1.0 || ^2.1.5
+  path_provider: ^2.1.5
   path: ^1.9.0
 
   # --- Telegram MTProto (the invisible auth + storage engine) -------------

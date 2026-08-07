@@ -1,0 +1,32 @@
+workflows:
+  android-build:
+    name: Android APK Build
+    max_build_duration: 60
+    # Individual free plan minutes apply to macOS M2 builds.
+    instance_type: mac_mini_m2
+
+    environment:
+      flutter: stable
+      java: 17
+
+    cache:
+      cache_paths:
+        - $HOME/.pub-cache
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
+
+    scripts:
+      - name: Show tool versions
+        script: |
+          flutter --version
+          java -version
+      - name: Get Flutter dependencies
+        script: |
+          flutter pub get
+      - name: Build APK
+        script: |
+          flutter build apk --release
+
+    artifacts:
+      - build/app/outputs/flutter-apk/*.apk
+      - build/app/outputs/apk/**/*.apk

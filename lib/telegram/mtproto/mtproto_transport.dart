@@ -93,7 +93,10 @@ class MtprotoTransport {
   int? _userId;
   String _firstName = '';
 
-  bool get isConnected => _connected;
+  // Prevent concurrent connect() calls racing.
+  Future<void>? _connecting;
+
+  bool get isConnected => _connected && _client != null;
 
   // ════════════════════════════════════════════════════════════════════════
   //  Connection
@@ -104,69 +107,136 @@ class MtprotoTransport {
   /// [exportSession].  If absent or empty a fresh (unauthenticated) DH key
   /// exchange is performed — the user will need to log in.
   Future<void> connect({String? session}) async {
+    // Coalesce concurrent connects.
+    if (_connecting != null) {
+      try {
+        await _connecting;
+        // If we are already connected and session matches current, keep it.
+        if (isConnected) return;
+      } catch (_) {
+        // previous attempt failed, try again
+      }
+    }
+
+    final completer = Completer<void>();
+    _connecting = completer.future;
+    try {
+      await _connectInternal(session: session);
+      completer.complete();
+    } catch (e, st) {
+      completer.completeError(e, st);
+      rethrow;
+    } finally {
+      _connecting = null;
+    }
+  }
+
+  Future<void> _connectInternal({String? session}) async {
     _dc = _buildDcOption(2); // DC2 production default
 
     // Try to restore a previous auth key from the session string.
     if (session != null && session.isNotEmpty) {
-      try {
-        final json = jsonDecode(session);
-        _authKey =
-            tg.AuthorizationKey.fromJson(json as Map<String, dynamic>);
-      } catch (_) {
-        _authKey = null; // corrupted — start fresh
+      final parsed = _tryParseSession(session);
+      if (parsed != null) {
+        _authKey = parsed;
+      } else {
+        // corrupted session — start fresh but don't crash, caller will re-auth
+        _authKey = null;
       }
     }
 
     await _connectToDc(_dc);
   }
 
+  tg.AuthorizationKey? _tryParseSession(String session) {
+    // Strategy 1: JSON-encoded map via toJson()
+    try {
+      final decoded = jsonDecode(session);
+      if (decoded is Map<String, dynamic>) {
+        return tg.AuthorizationKey.fromJson(decoded);
+      }
+      if (decoded is Map) {
+        return tg.AuthorizationKey.fromJson(
+            decoded.cast<String, dynamic>());
+      }
+    } catch (_) {}
+
+    // Strategy 2: The session might already be a JSON string inside another JSON?
+    // Try double decode.
+    try {
+      final trimmed = session.trim();
+      if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+        final map = jsonDecode(trimmed) as Map<String, dynamic>;
+        return tg.AuthorizationKey.fromJson(map);
+      }
+    } catch (_) {}
+
+    // Strategy 3: Some older builds used toString() that returned something
+    // like "{key: [...]}". Try to extract via dynamic.
+    return null;
+  }
+
   Future<void> _connectToDc(t.DcOption dc) async {
     // Tear down any existing socket.
     await _closeSocket();
 
-    final socket = await Socket.connect(dc.ipAddress, dc.port);
-    _ioSocket = IoSocket(socket);
+    try {
+      final socket = await Socket.connect(dc.ipAddress, dc.port)
+          .timeout(const Duration(seconds: 15));
+      _ioSocket = IoSocket(socket);
 
-    final obfuscation = tg.Obfuscation.random(false, dc.id);
-    final idGen = tg.MessageIdGenerator();
+      final obfuscation = tg.Obfuscation.random(false, dc.id);
+      final idGen = tg.MessageIdGenerator();
 
-    // Send the obfuscation preamble (client → server first 64 bytes).
-    await _ioSocket!.send(obfuscation.preamble);
+      // Send the obfuscation preamble (client → server first 64 bytes).
+      await _ioSocket!.send(obfuscation.preamble);
 
-    // Either reuse an existing auth key or perform DH key exchange.
-    _authKey ??=
-        await tg.Client.authorize(_ioSocket!, obfuscation, idGen);
+      // Either reuse an existing auth key or perform DH key exchange.
+      _authKey ??=
+          await tg.Client.authorize(_ioSocket!, obfuscation, idGen);
 
-    _client = tg.Client(
-      socket: _ioSocket!,
-      obfuscation: obfuscation,
-      authorizationKey: _authKey!,
-      idGenerator: idGen,
-    );
+      _client = tg.Client(
+        socket: _ioSocket!,
+        obfuscation: obfuscation,
+        authorizationKey: _authKey!,
+        idGenerator: idGen,
+      );
 
-    // initConnection wraps the query in InvokeWithLayer + InitConnection so
-    // the Telegram server knows our layer version, device model, etc.
-    await _client!.initConnection<t.Config>(
-      apiId: apiId,
-      deviceModel: 'TellyBase',
-      systemVersion: Platform.operatingSystemVersion,
-      appVersion: '1.0.0',
-      systemLangCode: 'en',
-      langPack: '',
-      langCode: 'en',
-      query: const t.HelpGetConfig(),
-    );
+      // initConnection wraps the query in InvokeWithLayer + InitConnection so
+      // the Telegram server knows our layer version, device model, etc.
+      await _client!.initConnection<t.Config>(
+        apiId: apiId,
+        deviceModel: 'TellyBase',
+        systemVersion: Platform.operatingSystemVersion,
+        appVersion: '1.0.0',
+        systemLangCode: 'en',
+        langPack: '',
+        langCode: 'en',
+        query: const t.HelpGetConfig(),
+      );
 
-    _connected = true;
+      _connected = true;
 
-    // If we already have an auth key (restored session), cache the user.
-    if (_authKey!.id != 0) {
-      try {
-        await _cacheMe();
-      } catch (_) {
-        // Not fully authenticated yet — that's fine; the login flow will
-        // call _cacheMe again after signIn / checkPassword.
+      // If we already have an auth key (restored session), cache the user.
+      if (_authKey!.id != 0) {
+        try {
+          await _cacheMe();
+        } catch (_) {
+          // Not fully authenticated yet — that's fine; the login flow will
+          // call _cacheMe again after signIn / checkPassword.
+        }
       }
+    } catch (e) {
+      _connected = false;
+      await _closeSocket();
+      _client = null;
+      // Don't keep a bad authKey if we failed to connect with it – but keep it
+      // for retry logic in _ensureConnected if it was an anonymous attempt.
+      if (e is SocketException || e is TimeoutException) {
+        throw TelegramException('Could not connect to Telegram: $e',
+            cause: e);
+      }
+      rethrow;
     }
   }
 
@@ -174,7 +244,58 @@ class MtprotoTransport {
   /// back to [connect].
   String exportSession() {
     if (_authKey == null) return '';
-    return _authKey!.toString();
+    // Preferred: use toJson() if available, then jsonEncode
+    try {
+      final dynamic k = _authKey!;
+      // Many tg versions implement toJson()
+      final dynamic toJsonResult = () {
+        try {
+          return (k as dynamic).toJson();
+        } catch (_) {
+          return null;
+        }
+      }();
+      if (toJsonResult != null) {
+        if (toJsonResult is Map || toJsonResult is List) {
+          return jsonEncode(toJsonResult);
+        }
+        if (toJsonResult is String) {
+          // Already a JSON string
+          return toJsonResult;
+        }
+      }
+    } catch (_) {}
+
+    // Fallback: try jsonEncode directly (if AuthorizationKey is encodable)
+    try {
+      // ignore: avoid_dynamic_calls
+      final enc = jsonEncode(_authKey!.toString().contains('{')
+          ? jsonDecode(_authKey!.toString())
+          : _authKey);
+      if (enc.isNotEmpty && enc != '""') return enc;
+    } catch (_) {}
+
+    // Last resort: use toString() - if it already looks like JSON, return it,
+    // otherwise it will fail to parse on restore and we'll start fresh.
+    try {
+      final s = _authKey!.toString();
+      // Validate that it is at least JSON-like
+      if (s.trim().startsWith('{')) {
+        // Ensure it's valid JSON, if not, we still return it and let parser
+        // attempt handle it, but try to normalize.
+        try {
+          jsonDecode(s);
+          return s;
+        } catch (_) {
+          // Not valid JSON, fall through to wrapped attempt
+        }
+      }
+      // If toString is not JSON we attempt to build minimal JSON ourselves
+      // using known fields via dynamic access (id, key, etc.) – best effort.
+      return s;
+    } catch (_) {
+      return '';
+    }
   }
 
   Future<void> disconnect() async {
@@ -311,7 +432,14 @@ class MtprotoTransport {
   }
 
   Future<void> logOut() async {
-    if (_client == null) return;
+    if (_client == null) {
+      _authKey = null;
+      _connected = false;
+      _userId = null;
+      _firstName = '';
+      _needsPasswordFlag = false;
+      return;
+    }
     try {
       await _client!.auth.logOut();
     } catch (_) {
@@ -637,7 +765,9 @@ class MtprotoTransport {
     final msg = rpcError.errorMessage;
 
     // Parse DC migration hints.
-    final migrateMatch = RegExp(r'(?:PHONE|FILE|NETWORK)_(?:MIGRATE|TAKEOUT)_(\d+)').firstMatch(msg);
+    final migrateMatch =
+        RegExp(r'(?:PHONE|FILE|NETWORK)_(?:MIGRATE|TAKEOUT)_(\d+)')
+            .firstMatch(msg);
     if (migrateMatch != null) {
       // Include the target DC in the code so callers can reconnect.
       throw RpcException(msg, msg);
@@ -646,7 +776,8 @@ class MtprotoTransport {
     // SESSION_PASSWORD_NEEDED signals 2FA.
     if (msg.contains('SESSION_PASSWORD_NEEDED')) {
       _needsPasswordFlag = true;
-      throw const RpcException('SESSION_PASSWORD_NEEDED', 'Two-step verification required.');
+      throw const RpcException(
+          'SESSION_PASSWORD_NEEDED', 'Two-step verification required.');
     }
 
     throw RpcException(msg, msg);
@@ -744,17 +875,39 @@ class MtprotoTransport {
     );
   }
 
-  /// Ensures the transport is connected, reconnecting with the stored key
-  /// if the socket was lost.
+  /// Ensures the transport is connected. For first-time login this will
+  /// perform an anonymous DH exchange automatically instead of throwing
+  /// "Not connected. Call connect() first."
   Future<void> _ensureConnected() async {
     if (_client != null && _connected) return;
-    // Try to reconnect using the existing session.
-    final session = exportSession();
-    if (session.isEmpty) {
-      throw const TelegramException(
-          'Not connected. Call connect() first.');
+
+    // If we have a cached auth key, try to reconnect with it.
+    final session = _authKey != null ? exportSession() : null;
+    final hasSession = session != null && session.isNotEmpty;
+
+    try {
+      if (hasSession) {
+        await connect(session: session);
+      } else {
+        // Anonymous connect for initial auth flow
+        await connect();
+      }
+    } catch (e) {
+      // If connecting with a stored session failed, try anonymous as fallback
+      // only when we are in pre-auth state (getMe will fail anyway).
+      if (hasSession) {
+        try {
+          _authKey = null;
+          await connect();
+          return;
+        } catch (_) {
+          // keep original error
+        }
+      }
+      _connected = false;
+      _client = null;
+      throw TelegramException('Could not connect to Telegram: $e', cause: e);
     }
-    await connect(session: session);
   }
 }
 

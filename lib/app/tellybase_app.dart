@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/di/providers.dart';
+import '../core/error/app_exception.dart';
 import '../features/auth/presentation/auth_state.dart';
 import '../features/auth/presentation/screens/otp_screen.dart';
 import '../features/auth/presentation/screens/sign_in_screen.dart';
@@ -39,12 +40,32 @@ class RootGate extends ConsumerWidget {
     return switch (auth) {
       AuthUnknown() => const SplashScreen(),
       AuthSignedOut() => const SignInScreen(),
-      // SignInScreen reads authControllerProvider itself, so the failure
-      // message is rendered reactively even though the widget is reused.
-      AuthFailed() => const SignInScreen(),
       AuthCodeRequested() => const OtpScreen(),
       AuthNeedsPassword() => const TwoFactorScreen(),
       AuthAuthenticated() => const HomeShell(),
+      AuthFailed(:final error) => _screenForFailure(error),
     };
+  }
+
+  Widget _screenForFailure(AppException error) {
+    if (error is RpcException) {
+      // OTP errors should stay on OTP screen
+      if (error.code.contains('PHONE_CODE') ||
+          error.code == 'PHONE_NUMBER_INVALID') {
+        return const OtpScreen();
+      }
+      // Password errors stay on 2FA screen
+      if (error.isPasswordInvalid ||
+          error.code.contains('PASSWORD') ||
+          error.code == 'SRP_ID_INVALID') {
+        return const TwoFactorScreen();
+      }
+      // SESSION_PASSWORD_NEEDED is handled separately, but just in case
+      if (error.isPasswordNeeded) {
+        return const TwoFactorScreen();
+      }
+    }
+    // Default to sign-in for phone/network errors
+    return const SignInScreen();
   }
 }

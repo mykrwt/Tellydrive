@@ -167,8 +167,12 @@ class AuthController extends Notifier<AuthState> {
           createdAt: DateTime.now(),
         ),
       );
+    } on TelegramConfigurationException catch (e) {
+      // The secure session may still be valid. Keep it so a build repaired
+      // with the correct credentials can restore without another OTP.
+      state = AuthFailed(e);
     } on AppException {
-      // Session invalid/expired – clear and go to signed out
+      // Session invalid/expired – clear and go to signed out.
       try {
         await ref.read(sessionStorageProvider).clear();
       } catch (_) {}

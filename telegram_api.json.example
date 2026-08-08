@@ -1,0 +1,4 @@
+{
+  "TELEGRAM_API_ID": "12345678",
+  "TELEGRAM_API_HASH": "replace_with_the_32_character_hash_from_my_telegram_org"
+}

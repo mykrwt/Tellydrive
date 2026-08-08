@@ -18,6 +18,14 @@ class TelegramException extends AppException {
   const TelegramException(super.message, {super.cause});
 }
 
+/// The app was built without a usable Telegram application credential.
+///
+/// This is a build/deployment problem, not a phone-number or OTP problem. The
+/// user cannot fix it by retrying the login code.
+class TelegramConfigurationException extends TelegramException {
+  const TelegramConfigurationException(super.message, {super.cause});
+}
+
 /// The Telegram RPC returned a typed error code (e.g. PHONE_CODE_INVALID).
 class RpcException extends TelegramException {
   const RpcException(this.code, String message, {super.cause})

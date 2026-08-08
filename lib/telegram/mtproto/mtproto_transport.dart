@@ -98,14 +98,34 @@ class MtprotoTransport {
 
   bool get isConnected => _connected && _client != null;
 
+  static final RegExp _apiHashPattern = RegExp(r'^[a-fA-F0-9]{32}$');
+
+  /// Fails before any socket/DH work when a build was not configured with a
+  /// real Telegram application identity. This prevents the generic "Bad
+  /// Request" and "invalid API hash" loop that a revoked baked-in key causes.
+  void _ensureApiCredentials() {
+    if (apiId <= 0) {
+      throw const TelegramConfigurationException(
+        'This build is missing a Telegram API ID. Rebuild it with the '
+        'TELEGRAM_API_ID and TELEGRAM_API_HASH dart defines.',
+      );
+    }
+    if (!_apiHashPattern.hasMatch(apiHash)) {
+      throw const TelegramConfigurationException(
+        'This build has an invalid Telegram API hash format. Rebuild it with '
+        'a matching API ID and hash from my.telegram.org/apps.',
+      );
+    }
+  }
+
   // ════════════════════════════════════════════════════════════════════════
   //  Connection
   // ════════════════════════════════════════════════════════════════════════
 
-  /// Connects to Telegram.  When [session] is non-null it must be a JSON
-  /// serialisation of a [tg.AuthorizationKey] previously obtained via
-  /// [exportSession].  If absent or empty a fresh (unauthenticated) DH key
-  /// exchange is performed — the user will need to log in.
+  /// Connects to Telegram. When [session] is non-null it must be the
+  /// versioned auth-key/DC envelope previously obtained via [exportSession].
+  /// If absent or empty a fresh (unauthenticated) DH key exchange is performed
+  /// — the user will need to log in.
   Future<void> connect({String? session}) async {
     // Coalesce concurrent connects.
     if (_connecting != null) {
@@ -132,51 +152,78 @@ class MtprotoTransport {
   }
 
   Future<void> _connectInternal({String? session}) async {
-    _dc = _buildDcOption(2); // DC2 production default
+    _ensureApiCredentials();
 
-    // Try to restore a previous auth key from the session string.
+    // New installations begin at DC2. A persisted session includes its home
+    // DC, because Telegram authorization keys are scoped to one data centre.
     if (session != null && session.isNotEmpty) {
       final parsed = _tryParseSession(session);
       if (parsed != null) {
-        _authKey = parsed;
+        _authKey = parsed.key;
+        _dc = _buildDcOption(parsed.dcId);
       } else {
-        // corrupted session — start fresh but don't crash, caller will re-auth
+        // An older/corrupt session cannot safely be used. Start a fresh
+        // unauthenticated connection rather than sending that key to a random
+        // DC and surfacing a misleading BAD_REQUEST.
         _authKey = null;
+        _dc = _buildDcOption(2);
       }
+    } else if (_authKey == null) {
+      _dc = _buildDcOption(2);
     }
 
     await _connectToDc(_dc);
   }
 
-  tg.AuthorizationKey? _tryParseSession(String session) {
-    // Strategy 1: JSON-encoded map via toJson()
+  /// Parses both the current session envelope and the raw AuthorizationKey
+  /// JSON written by builds before DC information was persisted. Legacy raw
+  /// keys are assumed to be DC2; if that key belongs elsewhere the user signs
+  /// in once more and the replacement session is stored in the new format.
+  ({tg.AuthorizationKey key, int dcId})? _tryParseSession(String session) {
     try {
       final decoded = jsonDecode(session);
-      if (decoded is Map<String, dynamic>) {
-        return tg.AuthorizationKey.fromJson(decoded);
-      }
-      if (decoded is Map) {
-        return tg.AuthorizationKey.fromJson(
-            decoded.cast<String, dynamic>());
-      }
-    } catch (_) {}
+      if (decoded is! Map) return null;
+      final map = decoded.cast<String, dynamic>();
+      final rawKey = map.containsKey('auth_key') ? map['auth_key'] : map;
+      final key = _authorizationKeyFromJson(rawKey);
+      if (key == null) return null;
+      final dcId = _validDcId(map['dc_id']) ?? 2;
+      return (key: key, dcId: dcId);
+    } catch (_) {
+      return null;
+    }
+  }
 
-    // Strategy 2: The session might already be a JSON string inside another JSON?
-    // Try double decode.
+  tg.AuthorizationKey? _authorizationKeyFromJson(Object? raw) {
     try {
-      final trimmed = session.trim();
-      if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-        final map = jsonDecode(trimmed) as Map<String, dynamic>;
-        return tg.AuthorizationKey.fromJson(map);
+      if (raw is String) {
+        return _authorizationKeyFromJson(jsonDecode(raw));
       }
-    } catch (_) {}
-
-    // Strategy 3: Some older builds used toString() that returned something
-    // like "{key: [...]}". Try to extract via dynamic.
+      if (raw is Map<String, dynamic>) {
+        return tg.AuthorizationKey.fromJson(raw);
+      }
+      if (raw is Map) {
+        return tg.AuthorizationKey.fromJson(raw.cast<String, dynamic>());
+      }
+    } catch (_) {
+      // An invalid secure-storage value is treated as an expired session.
+    }
     return null;
   }
 
+  int? _validDcId(Object? value) {
+    final id = switch (value) {
+      int value => value,
+      String value => int.tryParse(value),
+      _ => null,
+    };
+    return id != null && _dcEndpoints.containsKey(id) ? id : null;
+  }
+
   Future<void> _connectToDc(t.DcOption dc) async {
+    // Keep the selected DC alongside the auth key for exportSession().
+    _dc = dc;
+
     // Tear down any existing socket.
     await _closeSocket();
 
@@ -240,61 +287,41 @@ class MtprotoTransport {
     }
   }
 
-  /// Exports the current session as a JSON string that can later be passed
-  /// back to [connect].
+  /// Exports the current session in a versioned envelope. The DC id must travel
+  /// with the authorization key: a key created for DC5 is not valid on DC2.
   String exportSession() {
     if (_authKey == null) return '';
-    // Preferred: use toJson() if available, then jsonEncode
-    try {
-      final dynamic k = _authKey!;
-      // Many tg versions implement toJson()
-      final dynamic toJsonResult = () {
-        try {
-          return (k as dynamic).toJson();
-        } catch (_) {
-          return null;
-        }
-      }();
-      if (toJsonResult != null) {
-        if (toJsonResult is Map || toJsonResult is List) {
-          return jsonEncode(toJsonResult);
-        }
-        if (toJsonResult is String) {
-          // Already a JSON string
-          return toJsonResult;
-        }
-      }
-    } catch (_) {}
 
-    // Fallback: try jsonEncode directly (if AuthorizationKey is encodable)
-    try {
-      // ignore: avoid_dynamic_calls
-      final enc = jsonEncode(_authKey!.toString().contains('{')
-          ? jsonDecode(_authKey!.toString())
-          : _authKey);
-      if (enc.isNotEmpty && enc != '""') return enc;
-    } catch (_) {}
+    final keyJson = _authorizationKeyJson();
+    if (keyJson == null) return '';
 
-    // Last resort: use toString() - if it already looks like JSON, return it,
-    // otherwise it will fail to parse on restore and we'll start fresh.
     try {
-      final s = _authKey!.toString();
-      // Validate that it is at least JSON-like
-      if (s.trim().startsWith('{')) {
-        // Ensure it's valid JSON, if not, we still return it and let parser
-        // attempt handle it, but try to normalize.
-        try {
-          jsonDecode(s);
-          return s;
-        } catch (_) {
-          // Not valid JSON, fall through to wrapped attempt
-        }
-      }
-      // If toString is not JSON we attempt to build minimal JSON ourselves
-      // using known fields via dynamic access (id, key, etc.) – best effort.
-      return s;
+      return jsonEncode({
+        'v': 2,
+        'dc_id': _dc.id,
+        'auth_key': keyJson,
+      });
     } catch (_) {
       return '';
+    }
+  }
+
+  Object? _authorizationKeyJson() {
+    if (_authKey == null) return null;
+
+    try {
+      final dynamic key = _authKey!;
+      final value = key.toJson();
+      if (value is String) return jsonDecode(value);
+      if (value is Map || value is List) return value;
+    } catch (_) {
+      // Fall through to jsonEncode, which also knows how to call toJson().
+    }
+
+    try {
+      return jsonDecode(jsonEncode(_authKey));
+    } catch (_) {
+      return null;
     }
   }
 
@@ -317,42 +344,74 @@ class MtprotoTransport {
   //  Authentication
   // ════════════════════════════════════════════════════════════════════════
 
-  /// Requests a login code for [phone].  Returns the phoneCodeHash plus
-  /// metadata.  Throws [TelegramException] on failure.
+  /// Requests a login code for [phone]. A phone number may belong to a
+  /// different Telegram DC than the bootstrap DC, so a PHONE_MIGRATE response
+  /// is handled transparently and the exact same request is retried there.
   Future<({String hash, bool viaApp, int? timeout})> sendCode(
       String phone) async {
+    _ensureApiCredentials();
     await _ensureConnected();
 
     try {
-      final result = await _client!.auth.sendCode(
-        phoneNumber: phone,
-        apiId: apiId,
-        apiHash: apiHash,
-        settings: const t.CodeSettings(
-          allowFlashcall: false,
-          currentNumber: true,
-          allowAppHash: false,
-          allowMissedCall: false,
-          allowFirebase: false,
-          unknownNumber: false,
-        ),
-      );
+      return await _sendCodeRequest(phone);
+    } on RpcException catch (error) {
+      final targetDc = _phoneMigrationDc(error.code);
+      if (targetDc == null || targetDc == _dc.id) rethrow;
 
-      if (result.error != null) {
-        _throwRpc(result.error!);
-      }
-
-      final sc = result.result as t.AuthSentCode;
-      return (
-        hash: sc.phoneCodeHash,
-        viaApp: sc.type is t.AuthSentCodeTypeApp,
-        timeout: sc.timeout,
-      );
+      await _moveUnauthenticatedLoginToDc(targetDc);
+      return _sendCodeRequest(phone);
     } on TelegramException {
       rethrow;
     } on Object catch (e) {
       throw TelegramException('Could not send the login code.', cause: e);
     }
+  }
+
+  Future<({String hash, bool viaApp, int? timeout})> _sendCodeRequest(
+      String phone) async {
+    final result = await _client!.auth.sendCode(
+      phoneNumber: phone,
+      apiId: apiId,
+      apiHash: apiHash,
+      settings: const t.CodeSettings(
+        allowFlashcall: false,
+        // We cannot know whether this is the device's own number. `false` is
+        // the documented safe value for a normal SMS/app-code request.
+        currentNumber: false,
+        allowAppHash: false,
+        allowMissedCall: false,
+        allowFirebase: false,
+        unknownNumber: false,
+      ),
+    );
+
+    if (result.error != null) {
+      _throwRpc(result.error!);
+    }
+
+    final sc = result.result as t.AuthSentCode;
+    return (
+      hash: sc.phoneCodeHash,
+      viaApp: sc.type is t.AuthSentCodeTypeApp,
+      timeout: sc.timeout,
+    );
+  }
+
+  int? _phoneMigrationDc(String code) {
+    final match = RegExp(r'^PHONE_MIGRATE_(\d+)$').firstMatch(code);
+    if (match == null) return null;
+    return _validDcId(match.group(1));
+  }
+
+  Future<void> _moveUnauthenticatedLoginToDc(int dcId) async {
+    // Auth keys are DC-specific. The key created during the bootstrap
+    // connection must never be reused against the phone's home DC.
+    _authKey = null;
+    _client = null;
+    _connected = false;
+    _userId = null;
+    _firstName = '';
+    await _connectToDc(_buildDcOption(dcId));
   }
 
   /// Submits the OTP code.  May throw [RpcException] with code
@@ -759,28 +818,36 @@ class MtprotoTransport {
   //  Internal helpers
   // ════════════════════════════════════════════════════════════════════════
 
-  /// Throws the appropriate [RpcException] or [TelegramException] for a
-  /// Telegram RPC error.  Handles DC migration and password-needed flows.
+  /// Converts Telegram's raw RPC errors into stable application errors.
   Never _throwRpc(t.RpcError rpcError) {
-    final msg = rpcError.errorMessage;
+    final code = rpcError.errorMessage.trim();
 
-    // Parse DC migration hints.
-    final migrateMatch =
-        RegExp(r'(?:PHONE|FILE|NETWORK)_(?:MIGRATE|TAKEOUT)_(\d+)')
-            .firstMatch(msg);
-    if (migrateMatch != null) {
-      // Include the target DC in the code so callers can reconnect.
-      throw RpcException(msg, msg);
+    // A credential can be syntactically valid but revoked, published or paired
+    // with a different id. Retrying a phone number or OTP cannot fix it.
+    if (code == 'API_ID_INVALID' ||
+        code == 'API_HASH_INVALID' ||
+        code == 'API_ID_PUBLISHED_FLOOD') {
+      throw RpcException(
+        code,
+        'This TellyBase build has Telegram API credentials that Telegram no '
+        'longer accepts. Install a newly configured build from the app owner.',
+      );
+    }
+
+    // The caller needs the untouched migration code to choose the target DC.
+    if (RegExp(r'(?:PHONE|FILE|NETWORK)_(?:MIGRATE|TAKEOUT)_(\d+)')
+        .hasMatch(code)) {
+      throw RpcException(code, code);
     }
 
     // SESSION_PASSWORD_NEEDED signals 2FA.
-    if (msg.contains('SESSION_PASSWORD_NEEDED')) {
+    if (code.contains('SESSION_PASSWORD_NEEDED')) {
       _needsPasswordFlag = true;
       throw const RpcException(
           'SESSION_PASSWORD_NEEDED', 'Two-step verification required.');
     }
 
-    throw RpcException(msg, msg);
+    throw RpcException(code, code);
   }
 
   /// Caches the authenticated user's id and first name.

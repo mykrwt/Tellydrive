@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/config/app_config.dart';
 import '../../../../core/di/providers.dart';
 import '../../../../core/error/app_exception.dart';
 import '../auth_state.dart';
@@ -215,6 +216,8 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
     final colors = Theme.of(context).colorScheme;
     final auth = ref.watch(authControllerProvider);
     final isLoading = _busy || auth is AuthUnknown;
+    final configurationIssue = AppConfig.telegramCredentialsIssue;
+    final canRequestCode = configurationIssue == null;
     String? errorText;
     String? errorCode;
     if (auth is AuthFailed) {
@@ -271,6 +274,52 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
                     ),
                     const SizedBox(height: 28),
 
+                    if (configurationIssue != null) ...[
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: colors.errorContainer,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(Icons.build_circle_outlined,
+                                size: 20, color: colors.onErrorContainer),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Telegram login needs app setup',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelLarge
+                                        ?.copyWith(
+                                          fontWeight: FontWeight.w700,
+                                          color: colors.onErrorContainer,
+                                        ),
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    '$configurationIssue The app owner must create or use a '
+                                    'private app at my.telegram.org/apps, add its matching ID '
+                                    'and hash as build-time dart defines, then install a new build.',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(color: colors.onErrorContainer),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                    ],
+
                     // Info card about country code
                     Container(
                       padding: const EdgeInsets.all(14),
@@ -314,7 +363,7 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
                     Text('Country', style: Theme.of(context).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600)),
                     const SizedBox(height: 6),
                     InkWell(
-                      onTap: isLoading ? null : _pickCountry,
+                      onTap: isLoading || !canRequestCode ? null : _pickCountry,
                       borderRadius: BorderRadius.circular(12),
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
@@ -390,7 +439,7 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
                       ),
                       validator: (_) => _validate(),
                       onFieldSubmitted: (_) => _submit(),
-                      enabled: !isLoading,
+                      enabled: !isLoading && canRequestCode,
                     ),
                     const SizedBox(height: 10),
                     if (hasInput)
@@ -421,7 +470,7 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
                     const SizedBox(height: 22),
 
                     FilledButton.icon(
-                      onPressed: isLoading ? null : _submit,
+                      onPressed: isLoading || !canRequestCode ? null : _submit,
                       icon: isLoading
                           ? const SizedBox(
                               width: 18,
@@ -504,6 +553,12 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
   String _friendlyError(String raw, String? code) {
     final lower = raw.toLowerCase();
     if (code != null) {
+      if (code == 'API_ID_INVALID' ||
+          code == 'API_HASH_INVALID' ||
+          code == 'API_ID_PUBLISHED_FLOOD') {
+        return 'This installed build has Telegram API credentials that Telegram rejected. '
+            'Install a newly configured build; retrying your phone number will not help.';
+      }
       if (code.contains('PHONE_NUMBER_INVALID') || lower.contains('phone_number_invalid')) {
         return 'That phone number looks invalid. Please check country code (+${_selected.dial}) and try again. Example: +${_selected.dial} ${_selected.example}';
       }

@@ -13,6 +13,10 @@ build/
 .env
 .data/
 
+# Private Telegram application credentials. Start from
+# telegram_api.json.example and never commit the filled-in file.
+telegram_api.json
+
 # OS
 .DS_Store
 Thumbs.db

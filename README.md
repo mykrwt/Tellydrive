@@ -10,8 +10,8 @@
 
 This project is a clean, from-scratch rewrite. It is **not** the upstream
 Nekogram / Telegram-Android app. Instead it reuses the same idea Nekogram does —
-the **MTProto** protocol — via the pure-Dart MTProto client (`mtproto` /
-`televerse`), so the app ships as a small, fast, native Flutter application that
+the **MTProto** protocol — via the pure-Dart `t` (TL schema) and `tg`
+(MTProto transport) packages, so the app ships as a small, fast, native Flutter application that
 only ever speaks the two Telegram surfaces it needs:
 
 1. **Authentication** (MTProto): phone number login → OTP → 2FA password.
@@ -109,7 +109,7 @@ lib/
     utils/                    # dates, sizes, mime, chunking, crypto
     storage/                  # secure session store, media cache, index cache
     widgets/                  # grid, thumbnail, date header, zoom viewer…
-  telegram/                   # <-- the ONLY place that imports mtproto/televerse
+  telegram/                   # <-- the ONLY place that imports t/tg
     core/                     # TelegramCore (auth + storage) contracts
     mtproto/                  # MTProto transport & adapters (the seam)
     metadata/                 # metadata codec, chunking plan
@@ -138,28 +138,52 @@ lib/
   `updateItem`, `deleteItems`.
 
 `lib/telegram/mtproto/mtproto_transport.dart` is the *only* file that imports
-`package:mtproto`. It maps the TL API calls (`auth.sendCode`, `auth.signIn`,
-`auth.checkPassword`, `account.getPassword`, `messages.getHistory`,
-`upload.saveBigFilePart`/`upload.saveFilePart`, `messages.sendMedia`,
-`upload.getFile`, `messages.editMessage`, `messages.deleteMessages`) onto
-`TelegramClient`. If you upgrade `mtproto` and its API changes, this one file is
-all you touch.
+`package:t` or `package:tg`. It maps the TL API calls (`auth.sendCode`,
+`auth.signIn`, `auth.checkPassword`, `account.getPassword`,
+`messages.getHistory`, `upload.saveBigFilePart`/`upload.saveFilePart`,
+`messages.sendMedia`, `upload.getFile`, `messages.editMessage`,
+`messages.deleteMessages`) onto `tg.Client`. If you upgrade either package and
+its API changes, this one file is all you touch.
 
 ---
 
 ## Running it
 
-```bash
-# 1. You need an API id/hash from https://my.telegram.org
-#    Put them in lib/core/config/app_config.dart (do NOT commit real values).
+Telegram requires every client to identify itself with a valid, matching API
+ID/hash pair. **There is intentionally no fallback credential in this repo**:
+shared or published API keys are rejected by Telegram and produce
+`API_ID_INVALID` / `API_ID_PUBLISHED_FLOOD` rather than a usable login.
 
-# 2. Regenerate platform scaffolding if needed:
-flutter create . --platforms android,ios --org app.tellybase
+1. Sign in at [my.telegram.org/apps](https://my.telegram.org/apps) as the app
+   owner and create (or rotate) a private application. Do not use Telegram's
+   official-client credentials or an API pair copied from another project.
+2. Create a local credentials file. It is ignored by git:
 
-# 3. Get dependencies & run
-flutter pub get
-flutter run
-```
+   ```bash
+   cp telegram_api.json.example telegram_api.json
+   # Edit telegram_api.json with your own API ID and 32-character API hash.
+   ```
+
+3. Build/run with that file. Stop a previously running app first — dart defines
+   are compiled into the binary, so a hot reload is not enough:
+
+   ```bash
+   flutter create . --platforms android,ios --org app.tellybase # if needed
+   flutter pub get
+   flutter run --dart-define-from-file=telegram_api.json
+   ```
+
+   Or pass values directly from a secure shell/CI secret store:
+
+   ```bash
+   flutter build apk --release \
+     --dart-define=TELEGRAM_API_ID="$TELEGRAM_API_ID" \
+     --dart-define=TELEGRAM_API_HASH="$TELEGRAM_API_HASH"
+   ```
+
+For Codemagic, define `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` in the
+`tellybase_secrets` group. The pipeline now fails before building if either is
+missing or malformed, preventing another non-working APK from being shipped.
 
 ### Required Android permissions (already in `android/app/src/main/AndroidManifest.xml`)
 
@@ -190,9 +214,9 @@ flutter run
 - Deletion is **soft by default**: moving an item to **Trash** flips the
   `tr` flag in Telegram. Permanent delete calls `messages.deleteMessages` on the
   chunk messages.
-- This release ships the MTProto adapter against the `mtproto`/`televerse`
-  `TelegramClient`; verify the exact method signatures against your pinned
-  version in `lib/telegram/mtproto/mtproto_transport.dart` before building.
+- This release ships the MTProto adapter against the `t`/`tg` packages;
+  verify exact method signatures against the pinned versions in
+  `lib/telegram/mtproto/mtproto_transport.dart` before building.
 - The app intentionally cannot and does not read other chats. If you later want
   shared/collaborative albums, add them by pointing `TelegramStorage` at a
   private channel — the rest of the app is already channel-agnostic.
@@ -201,8 +225,12 @@ flutter run
 
 ## Security notes
 
-- API id/hash and session auth keys are treated as secrets. The session is held
-  in `flutter_secure_storage` (Keychain/Keystore).
+- API id/hash and session auth keys are treated as secrets. API credentials are
+  injected at build time (never committed); the session is held in
+  `flutter_secure_storage` (Keychain/Keystore).
+- If Telegram rejects an API pair, rotate it at `my.telegram.org/apps`, update
+  the secure build variables, and distribute a fresh APK. Retrying an OTP or
+  changing the phone number cannot repair an invalid application credential.
 - No third-party server ever sees your photos; the only network peers are
   Telegram's MTProto datacenters.
 - Metadata captions are plaintext JSON (as Telegram stores all non-secret-chat

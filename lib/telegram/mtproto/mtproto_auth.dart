@@ -24,6 +24,8 @@ class MtprotoAuth implements TelegramAuth {
         isCodeViaApp: r.viaApp,
         timeoutSeconds: r.timeout,
       );
+    } on RpcException {
+      rethrow;
     } on TelegramException {
       rethrow;
     } on Object catch (e) {
@@ -49,26 +51,42 @@ class MtprotoAuth implements TelegramAuth {
         rethrow;
       }
       rethrow;
+    } on TelegramException {
+      rethrow;
     }
     return _buildSession(phone: phone);
   }
 
   @override
   Future<TelegramSession> checkPassword(String password) async {
-    await _transport.checkPassword(password);
+    try {
+      await _transport.checkPassword(password);
+    } on RpcException {
+      rethrow;
+    }
     return _buildSession();
   }
 
   @override
   Future<TelegramUserInfo> getMe() async {
-    final userId = await _transport.getMe();
-    final firstName = await _transport.getFirstName();
-    return TelegramUserInfo(userId: userId, firstName: firstName);
+    try {
+      final userId = await _transport.getMe();
+      final firstName = await _transport.getFirstName();
+      return TelegramUserInfo(userId: userId, firstName: firstName);
+    } on TelegramException {
+      rethrow;
+    } on Object catch (e) {
+      throw TelegramException('Could not fetch user info.', cause: e);
+    }
   }
 
   @override
   Future<void> logOut() async {
-    await _transport.logOut();
+    try {
+      await _transport.logOut();
+    } catch (_) {
+      // ignore network errors, still clear local
+    }
     await clearSession();
   }
 
@@ -77,7 +95,11 @@ class MtprotoAuth implements TelegramAuth {
 
   @override
   Future<void> storeSession(TelegramSession session) async {
-    await _transport.connect(session: session.authKey);
+    // If transport already has this key, don't reconnect unnecessarily
+    final current = _transport.exportSession();
+    if (current != session.authKey) {
+      await _transport.connect(session: session.authKey);
+    }
     await _sessionStorage.write(session.authKey);
   }
 
@@ -102,7 +124,8 @@ class MtprotoAuth implements TelegramAuth {
     final firstName = await _transport.getFirstName();
     final authKey = _transport.exportSession();
     if (authKey.isEmpty) {
-      throw const TelegramException('Authentication did not produce a session.');
+      throw const TelegramException(
+          'Authentication did not produce a session. Try again.');
     }
     final session = TelegramSession(
       authKey: authKey,

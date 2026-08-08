@@ -1,21 +1,22 @@
 workflows:
-  tellybase-android:
-    name: TellyBase Release
+  android-build:
+    name: Android APK Build
+    max_build_duration: 60
+    # Individual free plan minutes apply to macOS M2 builds.
+    instance_type: mac_mini_m2
 
     environment:
       flutter: stable
       java: 17
-      groups:
-        - tellybase_secrets
+
+    cache:
+      cache_paths:
+        - $HOME/.pub-cache
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
 
     scripts:
-      - name: Clean
-        script: flutter clean
-
-      - name: Flutter pub get
-        script: flutter pub get
-
-      - name: Write local.properties
+      - name: Show tool versions
         script: |
           echo "flutter.sdk=$FLUTTER_ROOT" > android/local.properties
           echo "flutter.versionName=1.0.0" >> android/local.properties
@@ -42,4 +43,5 @@ workflows:
             --dart-define=TELEGRAM_API_HASH="$TELEGRAM_API_HASH"
 
     artifacts:
-      - build/app/outputs/flutter-apk/app-release.apk
+      - build/app/outputs/flutter-apk/*.apk
+      - build/app/outputs/apk/**/*.apk

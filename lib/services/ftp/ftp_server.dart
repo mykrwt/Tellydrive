@@ -113,6 +113,7 @@ class _FtpSession {
     _reply(220, 'TeleDrive Telegram-backed FTP ready');
     try {
       await for (final line in socket
+          .cast<List<int>>()
           .transform(utf8.decoder)
           .transform(const LineSplitter())) {
         if (_closed) break;

@@ -1,210 +1,79 @@
-# TellyBase
+# TeleDrive Gallery & Files
 
-> A Google Photos–style private gallery where **Telegram is the invisible
-> storage engine**. You sign in with your Telegram phone number, and every
-> photo, video and album lives inside your own Telegram account — chunked into
-> MTProto messages, indexed entirely by the metadata stored in those messages.
-> There is **no chats UI, no groups, no channels, no bot, no external backend,
-> and no database**. Reinstall the app, log in again, and your entire library
-> rebuilds itself from Telegram.
+An Android Flutter application that uses a Telegram account as its storage layer. This project is built directly on the native TDLib architecture from [`ali-abdollahzadeh/teledrive`](https://github.com/ali-abdollahzadeh/teledrive): the existing authentication, persistent TDLib session, Saved Messages/channel discovery, upload, download, deletion, and cache behavior remain the backend foundation.
 
-This project is a clean, from-scratch rewrite. It is **not** the upstream
-Nekogram / Telegram-Android app. Instead it reuses the same idea Nekogram does —
-the **MTProto** protocol — via the pure-Dart MTProto client (`mtproto` /
-`televerse`), so the app ships as a small, fast, native Flutter application that
-only ever speaks the two Telegram surfaces it needs:
+No S3, Firebase, Google Drive, Dropbox, or secondary cloud-storage backend is used.
 
-1. **Authentication** (MTProto): phone number login → OTP → 2FA password.
-2. **Storage** (MTProto): upload/download of file parts against your own
-   **Saved Messages** chat.
+## Application structure
 
-Everything Telegram exposes that a user normally sees — chats, groups, channels,
-calls, stories, contacts, bots, notifications, settings — is intentionally absent.
+The authenticated app has exactly three bottom destinations:
 
----
+- **Gallery** — three-column, date-grouped Telegram image/video grid; full-screen photo/video viewer; selection, deletion, download, and sharing.
+- **Files** — Telegram storage folders and their real files only; integrated search/sort, list/grid modes, thumbnails/type icons, multi-select, rename, delete, move, copy, download, share, upload, and private-channel folder creation.
+- **Settings** — account, Telegram connection, storage, transfer, gallery, file manager, appearance, notifications, security, backend, FTP server, and app information.
 
-## Philosophy
+Internal chunk and manifest documents are filtered in the repository layer, so they cannot appear in Gallery, Files, search, or FTP listings.
 
-| Requirement | How TellyBase meets it |
-| --- | --- |
-| No visible Telegram UI | The only Telegram surface is your *Saved Messages* chat (peer = your own user). Nothing else is read or written. |
-| No external backend / DB | The library index is rebuilt from **message captions** in Saved Messages. |
-| Original quality, no compression | Media is uploaded via MTProto as raw documents (`InputDocument`) — Telegram does not re-encode documents. |
-| Very large files | Files are chunked into multiple document messages (< 2 GiB each, default 512 MiB). A chunk **manifest** of message-ids is embedded in the first chunk's caption, so chunks are stitched back transparently during download. |
-| Preserve original filenames | Each chunk document carries the original filename in its Telegram `document attribute` **and** in the metadata caption; downloads are written back under the exact original name. |
-| Rebuild after reinstall / new device | `LibraryRepository.syncFromTelegram()` walks Saved Messages history, parses `__tellybase` metadata captions, and reconstructs items, albums, favorites and trash. |
-| Clean architecture | `presentation → controller → usecase → repository → datasource → telegram core`, with domain entities independent of Flutter/MTProto. |
+## Telegram and TDLib
 
----
+Flutter talks to `TelegramPlugin` through method/event channels. `TeleManager` uses the upstream `tdlibx` integration for:
 
-## How storage works (the important part)
+- phone/code/2FA authentication and persistent sessions;
+- Saved Messages and writable channel discovery;
+- Telegram message history and media metadata;
+- document upload, progress events, on-demand download, and deletion;
+- private-channel creation/rename/removal;
+- thumbnail download and TDLib cache management.
 
-### The vault
+Telegram API credentials are compiled into Android `BuildConfig`; they are never sent through Flutter UI or committed to source.
 
-Every upload is stored in the user's **Saved Messages** (`peer = self`, chat
-id = your numeric user id). There is no channel to join and nothing to configure.
+Create `android/secrets.properties` for local builds:
 
-### The message layout for a single file
-
-1. The file is split into `N` chunks of `CHUNK_SIZE` bytes (default `512 MiB`).
-2. Chunk **0** is sent as a Telegram document. Its caption is a compact JSON
-   metadata record (see below). Sending returns a `message_id = m0`.
-3. Chunks `1..N-1` are sent as documents with a minimal `{"t":"part",...}`
-   caption. They are never shown as standalone items.
-4. The first chunk's caption is **edited** once all chunks exist to append
-   `"ch": [m0, m1, ..., mN-1]` — the chunk manifest. This lives in Telegram
-   forever, so any future device can find every part.
-5. A local thumbnail is cached so the grid renders instantly; the full image is
-   streamed on demand.
-
-### Metadata caption schema (compact JSON, well under Telegram's 1024-char caption)
-
-```jsonc
-{
-  "v": 1,            // schema version
-  "t": "item",       // record type: "item" | "album" | "part"
-  "id": "<uuid>",    // stable TellyBase item id
-  "fn": "IMG_0042.jpg", // ORIGINAL filename — preserved end-to-end
-  "m":  "image/jpeg",   // MIME type
-  "s":  4829382,        // total byte size (sum of all chunks)
-  "u":  1690000000,     // upload time (epoch seconds)
-  "c":  0,              // capture time (epoch seconds), if known
-  "a":  null,           // album id, if any
-  "an": null,           // album display name
-  "f":  false,          // favorite flag
-  "tr": false,          // trashed flag
-  "n":  3,              // total chunk count
-  "first": m0,          // message id of chunk 0 (the authoritative record)
-  "ch": [m0, m1, m2]    // chunk manifest (message ids), edited in after upload
-}
+```properties
+TELEGRAM_API_ID=123456
+TELEGRAM_API_HASH=your_api_hash
 ```
 
-Because flags (`favorite`, `trashed`, album membership) live in the caption, toggling
-favorite/trash = one `editMessage` on the first chunk — and the change is durable
-in Telegram, surviving reinstall.
+CI may instead provide secret environment variables named `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`. `android/secrets.properties`, keystores, and signing properties are ignored by Git.
 
-### How the library rebuilds itself
+## Large and resumable files
 
-`syncFromTelegram()` paginates `messages.getHistory` on the Saved Messages peer,
-decodes every caption, skips `part` records, and merges `item`/`album` records
-into the in-memory + on-disk index. Trashed items are grouped in **Trash**,
-favorites in **Favorites**, albums are assembled from the `a`/`an` fields, and
-**Storage Usage** is a roll-up of `s` per day/month.
+Files accepted by Telegram directly (up to 2 GiB in this backend) are not split. Larger files are streamed into 1900 MiB parts and uploaded sequentially as hidden Telegram documents.
 
----
+Each part caption records the upload UUID, original name/size/MIME type, part count, and zero-based order. After all parts finish, a JSON manifest document commits the virtual file. Completed part state is persisted after each upload. Retrying the same source resumes at the first missing/failed part rather than starting again.
 
-## Project layout
+Downloads fetch each part on demand and stream them into one reconstructed file. The reconstructed byte count is checked against the original manifest. Gallery and Files always model the result as one normal file, including videos.
 
-```
-lib/
-  main.dart
-  app/
-    tellybase_app.dart        # Material 3 app + navigation shell
-    router.dart
-    theme/                    # Material 3 color & typography tokens
-  core/
-    config/app_config.dart
-    di/providers.dart         # Riverpod providers (composition root)
-    error/                    # typed exceptions
-    utils/                    # dates, sizes, mime, chunking, crypto
-    storage/                  # secure session store, media cache, index cache
-    widgets/                  # grid, thumbnail, date header, zoom viewer…
-  telegram/                   # <-- the ONLY place that imports mtproto/televerse
-    core/                     # TelegramCore (auth + storage) contracts
-    mtproto/                  # MTProto transport & adapters (the seam)
-    metadata/                 # metadata codec, chunking plan
-    models/
-  features/
-    auth/                     # phone → OTP → 2FA → session
-    library/                  # item/album domain + rebuild-from-Telegram
-    gallery/                  # Google Photos–style home grid & full-screen viewer
-    albums/
-    favorites/
-    search/
-    trash/
-    storage/                  # usage breakdown
-    downloads/
-    settings/
-    backup/                   # auto-backup (WorkManager + photo_manager)
-```
+## FTP server
 
-### The Telegram seam
+Settings can start or stop a local-network FTP server and configure its username, encrypted password, and port. The screen shows live status, host, and port.
 
-`lib/telegram/core/telegram_core.dart` defines two small interfaces:
+The FTP root is backed by the same repository as Files:
 
-- `TelegramAuth` — `sendCode`, `signIn`, `checkPassword`, `getMe`, `logOut`,
-  plus session load/save.
-- `TelegramStorage` — `uploadItem`, `downloadItem`, `syncHistory`,
-  `updateItem`, `deleteItems`.
+- root directories are Saved Messages and writable Telegram channels;
+- `LIST`/`MLSD` return only user-facing Telegram files;
+- `RETR` lazily downloads the requested file;
+- `STOR`, `DELE`, `MKD`, `RMD`, and `RNFR`/`RNTO` modify Telegram-backed storage.
 
-`lib/telegram/mtproto/mtproto_transport.dart` is the *only* file that imports
-`package:mtproto`. It maps the TL API calls (`auth.sendCode`, `auth.signIn`,
-`auth.checkPassword`, `account.getPassword`, `messages.getHistory`,
-`upload.saveBigFilePart`/`upload.saveFilePart`, `messages.sendMedia`,
-`upload.getFile`, `messages.editMessage`, `messages.deleteMessages`) onto
-`TelegramClient`. If you upgrade `mtproto` and its API changes, this one file is
-all you touch.
+The server does not create a local mirror. A requested download or in-progress upload may use TDLib/app temporary cache for that individual file. FTP is unencrypted and should only be enabled on a trusted local network; the server stops when the provider/app process is disposed.
 
----
+## Build
 
-## Running it
+Requirements:
+
+- Flutter stable
+- Android SDK
+- Java 17
+- Telegram API credentials from [my.telegram.org](https://my.telegram.org)
 
 ```bash
-# 1. You need an API id/hash from https://my.telegram.org
-#    Put them in lib/core/config/app_config.dart (do NOT commit real values).
-
-# 2. Regenerate platform scaffolding if needed:
-flutter create . --platforms android,ios --org app.tellybase
-
-# 3. Get dependencies & run
 flutter pub get
-flutter run
+flutter test
+flutter build apk --release
 ```
 
-### Required Android permissions (already in `android/app/src/main/AndroidManifest.xml`)
+When no release keystore is provided, Android uses the normal development-compatible signing behavior. For production signing, create `android/key.properties` with the standard `storeFile`, `storePassword`, `keyAlias`, and `keyPassword` fields. `codemagic.yaml` remains the CI build entry point.
 
-- `INTERNET` — MTProto transport
-- `READ_MEDIA_IMAGES` / `READ_MEDIA_VIDEO` — auto-backup gallery scan (API 33+)
-- `READ_EXTERNAL_STORAGE` (maxSdk 32) / `READ_MEDIA_VISUAL_USER_SELECTED`
-- `POST_NOTIFICATIONS` — background upload/download progress
-- `RECEIVE_BOOT_COMPLETED`, `FOREGROUND_SERVICE` — reliable background backups
+## Platform scope
 
-### First-run flow
-
-1. **Phone number** → Telegram sends the OTP.
-2. **OTP** → signed in (or sign-up if the number is new).
-3. **2FA** → shown only if the account has a two-step password.
-4. The session (auth key) is stored in the OS secure store.
-5. **Home** → if the library is empty it syncs from Saved Messages, then presents
-   the day-grouped gallery. Enable **Backup & Sync** to start auto-uploading the
-   device gallery in the background.
-
----
-
-## Deliberate limitations
-
-- Storage is your own Telegram account, so it is subject to Telegram's per-DC
-  file and rate limits and to your account's total quota (your Telegram space is
-  not unlimited). Chunking keeps individual messages < 2 GiB, but very large
-  libraries will consume your account's storage.
-- Deletion is **soft by default**: moving an item to **Trash** flips the
-  `tr` flag in Telegram. Permanent delete calls `messages.deleteMessages` on the
-  chunk messages.
-- This release ships the MTProto adapter against the `mtproto`/`televerse`
-  `TelegramClient`; verify the exact method signatures against your pinned
-  version in `lib/telegram/mtproto/mtproto_transport.dart` before building.
-- The app intentionally cannot and does not read other chats. If you later want
-  shared/collaborative albums, add them by pointing `TelegramStorage` at a
-  private channel — the rest of the app is already channel-agnostic.
-
----
-
-## Security notes
-
-- API id/hash and session auth keys are treated as secrets. The session is held
-  in `flutter_secure_storage` (Keychain/Keystore).
-- No third-party server ever sees your photos; the only network peers are
-  Telegram's MTProto datacenters.
-- Metadata captions are plaintext JSON (as Telegram stores all non-secret-chat
-  messages). If you want encryption at rest, extend `MetadataCodec` to wrap the
-  payload — the codec is already a single choke point.
+The inherited TDLib bridge is Android-specific. A native iOS TDLib implementation would be required before enabling the same backend on iOS.

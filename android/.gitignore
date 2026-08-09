@@ -1,0 +1,11 @@
+/.gradle
+/captures/
+/local.properties
+GeneratedPluginRegistrant.java
+.cxx/
+
+# Never commit Telegram API credentials or release signing material.
+secrets.properties
+key.properties
+**/*.keystore
+**/*.jks

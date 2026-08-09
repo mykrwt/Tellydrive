@@ -97,19 +97,43 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
   }
 
   Future<String?> _chooseFolder(DriveState state, {required String title}) {
+    final folders = state.folders.isNotEmpty
+        ? state.folders
+        : [
+            DriveFolder(
+              id: 'saved_messages',
+              title: 'Saved Messages',
+              telegramChannelId: 'saved_messages',
+              createdAt: DateTime.now(),
+              fileCount: 0,
+              isSavedMessages: true,
+            )
+          ];
     return showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
       builder: (context) => SafeArea(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          ListTile(title: Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700))),
+          ListTile(
+            title: Text(
+              title,
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.3,
+              ),
+            ),
+          ),
           Flexible(
             child: ListView(
               shrinkWrap: true,
-              children: state.folders.map((folder) => ListTile(
-                leading: Icon(folder.isSavedMessages ? Icons.bookmark_rounded : Icons.folder_rounded, color: Colors.amber.shade700),
-                title: Text(folder.title),
-                trailing: folder.id == state.currentFolderId && !_atRoot ? const Icon(Icons.check) : null,
+              children: folders.map((folder) => ListTile(
+                leading: Icon(
+                  folder.isSavedMessages ? Icons.bookmark_rounded : Icons.folder_outlined,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+                title: Text(folder.title, style: const TextStyle(fontWeight: FontWeight.w500)),
+                trailing: folder.id == state.currentFolderId && !_atRoot ? const Icon(Icons.check, size: 20) : null,
                 onTap: () => Navigator.pop(context, folder.id),
               )).toList(),
             ),
@@ -124,12 +148,15 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
     final value = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Create Telegram folder'),
+        title: const Text('Create Storage Folder', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
         content: TextField(
           controller: controller,
           autofocus: true,
           textInputAction: TextInputAction.done,
-          decoration: const InputDecoration(labelText: 'Folder name'),
+          decoration: const InputDecoration(
+            labelText: 'Folder name',
+            hintText: 'e.g. Documents, Media, Backups',
+          ),
           onSubmitted: (value) => Navigator.pop(context, value),
         ),
         actions: [
@@ -160,8 +187,7 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
     final name = await _nameDialog('Rename folder', folder.title);
     if (name == null || name == folder.title) return;
     await _run(() async {
-      await ref.read(driveRepositoryProvider).renameFolder(folder, name);
-      await ref.read(driveProvider.notifier).loadFolders();
+      await ref.read(driveProvider.notifier).renameFolder(folder, name);
     });
   }
 
@@ -439,26 +465,49 @@ class _FolderList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (loading && folders.isEmpty) return const Center(child: CircularProgressIndicator());
-    if (folders.isEmpty) return ListView(children: const [SizedBox(height: 150), Icon(Icons.folder_off_outlined, size: 54), SizedBox(height: 10), Text('No Telegram storage folders', textAlign: TextAlign.center)]);
+    if (folders.isEmpty) {
+      return ListView(children: [
+        const SizedBox(height: 140),
+        Icon(Icons.folder_off_outlined, size: 52, color: Theme.of(context).colorScheme.onSurfaceVariant),
+        const SizedBox(height: 12),
+        Text(
+          'No Telegram storage folders found',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: Theme.of(context).colorScheme.onSurface),
+        ),
+      ]);
+    }
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(8, 0, 8, 100),
       itemCount: folders.length,
-      separatorBuilder: (_, __) => const Divider(height: 1, indent: 66),
+      separatorBuilder: (_, __) => const Divider(height: 1, indent: 68),
       itemBuilder: (context, index) {
         final folder = folders[index];
         return ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
           leading: Container(
-            width: 46,
-            height: 46,
-            decoration: BoxDecoration(color: Colors.amber.withValues(alpha: .16), borderRadius: BorderRadius.circular(10)),
-            child: Icon(folder.isSavedMessages ? Icons.bookmark_rounded : Icons.folder_rounded, color: Colors.amber.shade700, size: 30),
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              folder.isSavedMessages ? Icons.bookmark_rounded : Icons.folder_outlined,
+              color: Theme.of(context).colorScheme.onSurface,
+              size: 24,
+            ),
           ),
-          title: Text(folder.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-          subtitle: Text(folder.isSavedMessages ? 'Telegram personal storage' : 'Telegram channel folder'),
+          title: Text(folder.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+          subtitle: Text(
+            folder.isSavedMessages ? 'Telegram Saved Messages' : 'Channel folder',
+            style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
+          ),
           onTap: () => onOpen(folder),
           trailing: folder.isSavedMessages
-              ? const Icon(Icons.chevron_right)
+              ? Icon(Icons.chevron_right_rounded, color: Theme.of(context).colorScheme.onSurfaceVariant)
               : PopupMenuButton<String>(
+                  iconColor: Theme.of(context).colorScheme.onSurfaceVariant,
                   onSelected: (value) => value == 'rename' ? onRename(folder) : onDelete(folder),
                   itemBuilder: (_) => const [
                     PopupMenuItem(value: 'rename', child: Text('Rename')),
@@ -549,13 +598,13 @@ IconData _fileIcon(DriveFileType type) => switch (type) {
 };
 
 Color _fileColor(DriveFileType type) => switch (type) {
-  DriveFileType.image => Colors.purple,
-  DriveFileType.video => Colors.red,
-  DriveFileType.audio => Colors.orange,
-  DriveFileType.pdf => Colors.red.shade700,
-  DriveFileType.document => Colors.blue,
-  DriveFileType.archive => Colors.amber.shade800,
-  DriveFileType.other => Colors.blueGrey,
+  DriveFileType.image => const Color(0xFF4B5563),
+  DriveFileType.video => const Color(0xFF374151),
+  DriveFileType.audio => const Color(0xFF6B7280),
+  DriveFileType.pdf => const Color(0xFF9CA3AF),
+  DriveFileType.document => const Color(0xFF4B5563),
+  DriveFileType.archive => const Color(0xFF6B7280),
+  DriveFileType.other => const Color(0xFF9CA3AF),
 };
 
 class _FileListTile extends ConsumerStatefulWidget {
@@ -585,11 +634,31 @@ class _FileListTileState extends ConsumerState<_FileListTile> {
   Widget build(BuildContext context) {
     return ListTile(
       selected: widget.selected,
+      selectedTileColor: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
       leading: widget.selectionMode
-          ? Checkbox(value: widget.selected, onChanged: (_) => widget.onTap())
+          ? Container(
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: widget.selected
+                    ? Theme.of(context).colorScheme.onSurface
+                    : Theme.of(context).colorScheme.surfaceContainerHighest,
+                border: Border.all(
+                  color: Theme.of(context).colorScheme.outline,
+                  width: 1.5,
+                ),
+              ),
+              child: widget.selected
+                  ? Icon(Icons.check, size: 15, color: Theme.of(context).colorScheme.surface)
+                  : null,
+            )
           : _FileVisual(file: widget.file, thumbnail: thumbnail, size: 48),
-      title: Text(widget.file.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text('${SizeFormatter.format(widget.file.size)}  •  ${DateFormat('MMM d, yyyy HH:mm').format(widget.file.uploadedAt)}${widget.file.isChunked ? '  •  Chunked' : ''}'),
+      title: Text(widget.file.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+      subtitle: Text(
+        '${SizeFormatter.format(widget.file.size)}  •  ${DateFormat('MMM d, yyyy HH:mm').format(widget.file.uploadedAt)}${widget.file.isChunked ? '  •  Chunked' : ''}',
+        style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
+      ),
       onTap: widget.onTap,
       onLongPress: widget.onLongPress,
       trailing: widget.selectionMode ? null : PopupMenuButton<String>(onSelected: widget.onMenu, itemBuilder: (_) => _fileActions),
@@ -628,9 +697,16 @@ class _FileGridTileState extends ConsumerState<_FileGridTile> {
       onLongPress: widget.onLongPress,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: widget.selected ? Theme.of(context).colorScheme.primaryContainer : Theme.of(context).colorScheme.surfaceContainerLow,
+          color: widget.selected
+              ? Theme.of(context).colorScheme.surfaceContainerHighest
+              : Theme.of(context).colorScheme.surfaceContainerLow,
           borderRadius: BorderRadius.circular(12),
-          border: widget.selected ? Border.all(color: Theme.of(context).colorScheme.primary, width: 2) : null,
+          border: Border.all(
+            color: widget.selected
+                ? Theme.of(context).colorScheme.onSurface
+                : Theme.of(context).colorScheme.outline.withValues(alpha: 0.45),
+            width: widget.selected ? 2 : 1,
+          ),
         ),
         child: Stack(children: [
           Padding(
@@ -638,13 +714,33 @@ class _FileGridTileState extends ConsumerState<_FileGridTile> {
             child: Column(children: [
               Expanded(child: Center(child: _FileVisual(file: widget.file, thumbnail: thumbnail, size: 72))),
               const SizedBox(height: 7),
-              Text(widget.file.name, maxLines: 2, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center, style: const TextStyle(fontSize: 12, height: 1.15)),
+              Text(widget.file.name, maxLines: 2, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, height: 1.15)),
               const SizedBox(height: 3),
               Text(SizeFormatter.format(widget.file.size), style: Theme.of(context).textTheme.labelSmall),
             ]),
           ),
           if (widget.selectionMode)
-            Positioned(top: 5, right: 5, child: Checkbox(value: widget.selected, onChanged: (_) => widget.onTap()))
+            Positioned(
+              top: 6,
+              right: 6,
+              child: Container(
+                width: 22,
+                height: 22,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: widget.selected
+                      ? Theme.of(context).colorScheme.onSurface
+                      : Theme.of(context).colorScheme.surfaceContainerHighest,
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.outline,
+                    width: 1.5,
+                  ),
+                ),
+                child: widget.selected
+                    ? Icon(Icons.check, size: 14, color: Theme.of(context).colorScheme.surface)
+                    : null,
+              ),
+            )
           else
             Positioned(top: 0, right: 0, child: PopupMenuButton<String>(iconSize: 18, padding: EdgeInsets.zero, onSelected: widget.onMenu, itemBuilder: (_) => _fileActions)),
         ]),
@@ -684,33 +780,69 @@ class _UploadStrip extends ConsumerWidget {
     final visible = tasks.where((task) => !task.isComplete).toList();
     if (visible.isEmpty) return const SizedBox.shrink();
     return SizedBox(
-      height: 58,
+      height: 60,
       child: ListView.separated(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         scrollDirection: Axis.horizontal,
         itemCount: visible.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (context, index) {
           final task = visible[index];
           return Container(
-            width: 230,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(color: task.hasError ? Colors.red.withValues(alpha: .12) : Theme.of(context).colorScheme.primaryContainer, borderRadius: BorderRadius.circular(9)),
+            width: 240,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: task.hasError
+                  ? const Color(0xFFDE4C4E).withValues(alpha: 0.15)
+                  : Theme.of(context).colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: task.hasError
+                    ? const Color(0xFFDE4C4E).withValues(alpha: 0.3)
+                    : Theme.of(context).colorScheme.outline.withValues(alpha: 0.5),
+              ),
+            ),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
-                Expanded(child: Text(task.fileName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12))),
-                Text(task.hasError ? 'Failed' : '${(task.progress * 100).round()}%', style: const TextStyle(fontSize: 11)),
+                Expanded(
+                  child: Text(
+                    task.fileName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                ),
+                Text(
+                  task.hasError ? 'Failed' : '${(task.progress * 100).round()}%',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: task.hasError
+                        ? const Color(0xFFDE4C4E)
+                        : Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
                 if (task.hasError)
                   InkWell(
                     onTap: () => ref.read(uploadProvider.notifier).retryUpload(task.id),
                     child: const Padding(
                       padding: EdgeInsets.only(left: 6),
-                      child: Icon(Icons.refresh, size: 17),
+                      child: Icon(Icons.refresh, size: 16),
                     ),
                   ),
               ]),
-              const SizedBox(height: 5),
-              LinearProgressIndicator(value: task.hasError ? null : task.progress, color: task.hasError ? Colors.red : null),
+              const SizedBox(height: 6),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: task.hasError ? 0 : task.progress,
+                  minHeight: 4,
+                  backgroundColor: Theme.of(context).colorScheme.outline.withValues(alpha: 0.4),
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    task.hasError ? const Color(0xFFDE4C4E) : Theme.of(context).colorScheme.onSurface,
+                  ),
+                ),
+              ),
             ]),
           );
         },

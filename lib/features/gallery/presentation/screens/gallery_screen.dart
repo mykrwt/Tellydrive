@@ -316,21 +316,38 @@ class _GalleryTileState extends ConsumerState<_GalleryTile> {
           const Positioned(right: 6, bottom: 6, child: Icon(Icons.layers_rounded, color: Colors.white, size: 18, shadows: [Shadow(blurRadius: 4)])),
         if (widget.selectionMode)
           Positioned(
-            top: 6,
-            right: 6,
+            top: 8,
+            right: 8,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
-              width: 25,
-              height: 25,
+              width: 24,
+              height: 24,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: widget.selected ? Theme.of(context).colorScheme.primary : Colors.black38,
-                border: Border.all(color: Colors.white, width: 2),
+                color: widget.selected
+                    ? const Color(0xFFFFFFFF)
+                    : const Color(0x66000000),
+                border: Border.all(
+                  color: const Color(0xFFFFFFFF),
+                  width: 1.8,
+                ),
               ),
-              child: widget.selected ? const Icon(Icons.check, color: Colors.white, size: 17) : null,
+              child: widget.selected
+                  ? const Icon(Icons.check, color: Color(0xFF111315), size: 15)
+                  : null,
             ),
           ),
-        if (widget.selected) Positioned.fill(child: DecoratedBox(decoration: BoxDecoration(border: Border.all(color: Theme.of(context).colorScheme.primary, width: 3)))),
+        if (widget.selected)
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                border: Border.all(
+                  color: const Color(0xFFFFFFFF),
+                  width: 3,
+                ),
+              ),
+            ),
+          ),
       ]),
     );
   }

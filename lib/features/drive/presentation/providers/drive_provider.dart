@@ -278,6 +278,14 @@ class DriveNotifier extends StateNotifier<DriveState> {
     return folder;
   }
 
+  Future<DriveFolder> renameFolder(DriveFolder folder, String newName) async {
+    final updated = await _repository.renameFolder(folder, newName);
+    state = state.copyWith(
+      folders: state.folders.map((f) => f.id == folder.id ? updated : f).toList(),
+    );
+    return updated;
+  }
+
   Future<void> importTelegramChannel(String chatId, String title) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -423,7 +431,8 @@ class UploadNotifier extends StateNotifier<UploadState> {
       await _uploadFileInternal(taskId, localPath, fileName, folderId);
       _updateTask(taskId, progress: 1.0, isComplete: true);
 
-      // Reload file list for the folder the file was uploaded to
+      // Give TDLib a brief moment to index the new message in the chat history
+      await Future<void>.delayed(const Duration(milliseconds: 600));
       await _ref.read(driveProvider.notifier).loadFiles(folderId: folderId);
     } catch (e) {
       _updateTask(taskId, hasError: true, error: e.toString());
@@ -447,6 +456,7 @@ class UploadNotifier extends StateNotifier<UploadState> {
         retryTask.folderId,
       );
       _updateTask(taskId, progress: 1, isComplete: true, hasError: false);
+      await Future<void>.delayed(const Duration(milliseconds: 600));
       await _ref
           .read(driveProvider.notifier)
           .loadFiles(folderId: retryTask.folderId);

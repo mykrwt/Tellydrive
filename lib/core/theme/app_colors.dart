@@ -11,14 +11,14 @@ class AppColors {
   // Core teledrive colors
   // ---------------------------------------------------------------------------
 
-  /// ThemeColors.teledrive_COLOR = 0xFF229AF0
-  static const Color teledriveBlue = Color(0xFF229AF0);
+  /// Refined monochrome primary for light mode (Obsidian Black)
+  static const Color teledriveBlue = Color(0xFF141619);
 
-  /// ThemeColors.teledrive_COLOR_TEXT = 0xFF298ACF
-  static const Color teledriveBlueText = Color(0xFF298ACF);
+  /// Refined monochrome text primary
+  static const Color teledriveBlueText = Color(0xFF141619);
 
-  /// ThemeColors.DEFAULT_BLACK_TEXT = 0xFF1A1D21
-  static const Color defaultBlackText = Color.fromARGB(255, 0, 0, 0);
+  /// ThemeColors.DEFAULT_BLACK_TEXT = 0xFF141619
+  static const Color defaultBlackText = Color(0xFF141619);
 
   static const Color onPrimary = Color(0xFFFFFFFF);
 
@@ -26,20 +26,17 @@ class AppColors {
   // Light theme surfaces
   // ---------------------------------------------------------------------------
 
-  static const Color lightBg = Color(0xFFFFFFFF); // key_windowBackgroundWhite
-  static const Color lightSurface =
-      Color(0xFFF1F1F3); // key_windowBackgroundGray
-  static const Color lightSurfaceAlt = Color(0xFFF5F5F5); // key_graySection
+  static const Color lightBg = Color(0xFFFFFFFF);
+  static const Color lightSurface = Color(0xFFF7F8FA);
+  static const Color lightSurfaceAlt = Color(0xFFEFF1F4);
   static const Color lightSurfaceElevated = Color(0xFFFFFFFF);
-  static const Color lightDivider = Color(0xFFD9D9D9); // key_divider
+  static const Color lightDivider = Color(0xFFE5E7EC);
 
   static const Color lightTextPrimary = defaultBlackText;
-  static const Color lightTextSecondary =
-      Color(0xFF808384); // windowBackgroundWhiteGrayText
-  static const Color lightTextSecondary2 = Color(0xFF82868A);
-  static const Color lightTextHint =
-      Color(0xFFA8A8A8); // windowBackgroundWhiteHintText
-  static const Color lightLinkText = Color(0xFF2678B6);
+  static const Color lightTextSecondary = Color(0xFF6B7280);
+  static const Color lightTextSecondary2 = Color(0xFF646B75);
+  static const Color lightTextHint = Color(0xFF9CA3AF);
+  static const Color lightLinkText = Color(0xFF25282D);
 
   // ---------------------------------------------------------------------------
   // Dialog / modal colors
@@ -149,8 +146,8 @@ class AppColors {
 
   static const Color avatarText = Color(0xFFFFFFFF);
 
-  static const Color avatarSaved = Color(0xFF69BDF9);
-  static const Color avatarSaved2 = Color(0xFF409FE1);
+  static const Color avatarSaved = Color(0xFF4B5563);
+  static const Color avatarSaved2 = Color(0xFF374151);
 
   static const Color avatarRed = Color(0xFFFF845E);
   static const Color avatarRed2 = Color(0xFFD45246);
@@ -189,16 +186,13 @@ class AppColors {
   // File / attachment colors
   // ---------------------------------------------------------------------------
 
-  static const Color fileImage =
-      Color(0xFF459DF5); // chat_attachGalleryBackground
-  static const Color fileVideo = Color(0xFF9F79E8); // key_color_purple
-  static const Color fileAudio =
-      Color(0xFFEB6060); // chat_attachAudioBackground
-  static const Color filePdf = Color(0xFFE05356); // key_color_red
-  static const Color fileDocument =
-      Color(0xFF5DAFEB); // files_folderIconBackground
-  static const Color fileArchive = Color(0xFFF28C39); // key_color_orange
-  static const Color fileOther = Color(0xFFA1ABB5); // avatar_backgroundGray
+  static const Color fileImage = Color(0xFF475263);
+  static const Color fileVideo = Color(0xFF3B4352);
+  static const Color fileAudio = Color(0xFF525A69);
+  static const Color filePdf = Color(0xFFB94A4C);
+  static const Color fileDocument = Color(0xFF475263);
+  static const Color fileArchive = Color(0xFF646E7E);
+  static const Color fileOther = Color(0xFF6B7280);
 
   // ---------------------------------------------------------------------------
   // teledrive chart / generic color set
@@ -228,26 +222,25 @@ class AppColors {
   // Legacy aliases used across your app
   // ---------------------------------------------------------------------------
 
-  static const Color primary = teledriveBlue;
-  static const Color primaryLight = Color(0xFF56BAF0);
-  static const Color primaryDark = Color(0xFF2288D1);
-  static const Color primaryContainer = Color(0xFFECF7FD);
+  static const Color primary = Color(0xFF141619);
+  static const Color primaryLight = Color(0xFF32363D);
+  static const Color primaryDark = Color(0xFF0F1113);
+  static const Color primaryContainer = Color(0xFFEFF1F4);
 
-  static const Color secondary = teledriveBlueText;
-  static const Color secondaryLight = Color(0xFF5DADE8);
-  static const Color secondaryDark = Color(0xFF1F89DB);
-  static const Color secondaryContainer = Color(0xFFE5E9EE);
+  static const Color secondary = Color(0xFF33383F);
+  static const Color secondaryLight = Color(0xFF4B515B);
+  static const Color secondaryDark = Color(0xFF22262B);
+  static const Color secondaryContainer = Color(0xFFE5E8EE);
 
-  static const Color tertiary = colorYellow;
-  static const Color tertiaryContainer = Color(0xFFFFF3D8);
+  static const Color tertiary = Color(0xFF4B5563);
+  static const Color tertiaryContainer = Color(0xFFF3F4F6);
 
-  static const Color surfaceDark =
-      Color(0xFF1C2229); // from voipgroup dark palette
-  static const Color surfaceVariantDark = Color(0xFF222A33);
-  static const Color backgroundDark = Color.fromARGB(255, 0, 0, 0);
-  static const Color cardDark = Color(0xFF222A33);
-  static const Color cardDarkAlt = Color(0xFF2C3A45);
-  static const Color dividerDark = Color(0xFF394654);
+  static const Color surfaceDark = Color(0xFF0C0E10);
+  static const Color surfaceVariantDark = Color(0xFF15181C);
+  static const Color backgroundDark = Color(0xFF090A0C);
+  static const Color cardDark = Color(0xFF15181D);
+  static const Color cardDarkAlt = Color(0xFF1E2229);
+  static const Color dividerDark = Color(0xFF2B3039);
 
   static const Color surfaceLight = lightBg;
   static const Color surfaceVariantLight = lightSurface;
@@ -255,9 +248,9 @@ class AppColors {
   static const Color cardLightAlt = lightSurfaceAlt;
   static const Color dividerLight = lightDivider;
 
-  static const Color textPrimaryDark = Color(0xFFFFFFFF);
-  static const Color textSecondaryDark = Color(0xFF858D94);
-  static const Color textHintDark = Color(0xFF6F7980);
+  static const Color textPrimaryDark = Color(0xFFF9FAFB);
+  static const Color textSecondaryDark = Color(0xFF9CA3AF);
+  static const Color textHintDark = Color(0xFF6B7280);
 
   static const Color textPrimaryLight = lightTextPrimary;
   static const Color textSecondaryLight = lightTextSecondary;
@@ -281,8 +274,8 @@ class AppColors {
 
   static const LinearGradient primaryGradient = LinearGradient(
     colors: [
-      teledriveBlue,
-      Color(0xFF56BAF0),
+      Color(0xFF141619),
+      Color(0xFF2C3038),
     ],
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
@@ -411,11 +404,11 @@ class AppColors {
   static const Color glassTargetMainTabs = Color(0xFFFFFFFF);
   static const Color glassTargetMainTopPanel = Color(0xFFFFFFFF);
 
-  static const Color glassTabSelected = Color(0xFF1A91E6);
-  static const Color glassTabSelectedText = Color(0xFF0D7FCF);
-  static const Color glassTabUnselected = Color(0xFF1A1D21);
+  static const Color glassTabSelected = Color(0xFF141619);
+  static const Color glassTabSelectedText = Color(0xFF141619);
+  static const Color glassTabUnselected = Color(0xFF6B7280);
 
-  static const Color glassSelectedBackground = Color(0x171A91E6);
+  static const Color glassSelectedBackground = Color(0x15141619);
 
   static const Color glassBadgeBackground = teledriveBlue;
   static const Color glassBadgeErrorBackground = fillRedNormal;

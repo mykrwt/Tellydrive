@@ -7,18 +7,48 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// ---------------------------------------------------------------------------
+// Telegram API credentials
+// ---------------------------------------------------------------------------
+// Source of truth: android/secrets.properties (git-ignored). It is created
+// locally by the developer, or by Codemagic from the "tellybase_secrets"
+// secret group (TELEGRAM_API_ID / TELEGRAM_API_HASH).
+//
+// We only fall back to the process environment variables when the file is
+// absent. The values are compiled into BuildConfig and read on the native
+// side (TelegramPlugin.kt). No secret values are ever printed here — only
+// whether each key was resolved ("loaded: yes/no").
 val secretsProperties = Properties()
 val secretsFile = rootProject.file("secrets.properties")
 
 if (secretsFile.exists()) {
     secretsProperties.load(FileInputStream(secretsFile))
 }
-val telegramApiId = secretsProperties.getProperty("TELEGRAM_API_ID")
-    ?: System.getenv("TELEGRAM_API_ID")
-    ?: "0"
-val telegramApiHash = secretsProperties.getProperty("TELEGRAM_API_HASH")
-    ?: System.getenv("TELEGRAM_API_HASH")
-    ?: ""
+
+/**
+ * Resolves a secret from android/secrets.properties first, then from the
+ * process environment, otherwise returns the provided safe default.
+ */
+fun resolveSecret(propertyKey: String, envVar: String, default: String): String {
+    val fromFile = secretsProperties.getProperty(propertyKey)?.trim()
+    if (!fromFile.isNullOrEmpty()) {
+        return fromFile
+    }
+    val fromEnv = System.getenv(envVar)?.trim()
+    if (!fromEnv.isNullOrEmpty()) {
+        return fromEnv
+    }
+    return default
+}
+
+val telegramApiId = resolveSecret("TELEGRAM_API_ID", "TELEGRAM_API_ID", "0")
+val telegramApiHash = resolveSecret("TELEGRAM_API_HASH", "TELEGRAM_API_HASH", "")
+
+// Safe diagnostics — presence only, never the secret values.
+val apiIdPresent = telegramApiId.trim().toIntOrNull()?.let { it > 0 } ?: false
+val apiHashPresent = telegramApiHash.isNotBlank()
+logger.lifecycle("TELEGRAM_API_ID loaded: ${if (apiIdPresent) "yes" else "no"}")
+logger.lifecycle("TELEGRAM_API_HASH loaded: ${if (apiHashPresent) "yes" else "no"}")
 
 val keystoreProperties = Properties()
 val keystorePropertiesFile = rootProject.file("key.properties")
@@ -60,7 +90,7 @@ android {
         buildConfigField(
             "String",
             "TELEGRAM_API_HASH",
-            "\"$telegramApiHash\""
+            "\"${telegramApiHash.replace("\\", "\\\\").replace("\"", "\\\"")}\""
         )
 
         ndk {

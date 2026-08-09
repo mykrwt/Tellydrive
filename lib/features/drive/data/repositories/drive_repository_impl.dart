@@ -251,7 +251,9 @@ class DriveRepositoryImpl implements DriveRepository {
       final downloaded = (event['downloadedPrefixSize'] as num?)?.toInt() ?? 0;
       if (size > 0) onProgress?.call((downloaded / size).clamp(0.0, 1.0).toDouble());
       final path = (event['localPath'] ?? '').toString();
-      if (event['isDownloadingCompleted'] == true && path.isNotEmpty) {
+      if ((event['isDownloadingCompleted'] == true || (size > 0 && downloaded >= size)) &&
+          path.isNotEmpty &&
+          File(path).existsSync()) {
         if (!completer.isCompleted) completer.complete(path);
       }
     }, onError: (Object error) {
@@ -262,8 +264,12 @@ class DriveRepositoryImpl implements DriveRepository {
         fileId: fileId,
         priority: 32,
       );
+      final size = (initial['size'] as num?)?.toInt() ?? 0;
+      final downloaded = (initial['downloadedPrefixSize'] as num?)?.toInt() ?? 0;
       final path = (initial['localPath'] ?? '').toString();
-      if (initial['isDownloadingCompleted'] == true && path.isNotEmpty) {
+      if ((initial['isDownloadingCompleted'] == true || (size > 0 && downloaded >= size)) &&
+          path.isNotEmpty &&
+          File(path).existsSync()) {
         if (!completer.isCompleted) completer.complete(path);
       }
       return await completer.future.timeout(
@@ -377,6 +383,17 @@ class DriveRepositoryImpl implements DriveRepository {
     }
   }
 
+  bool _isUploadDone(Map<String, dynamic> map) {
+    if (map['isUploadingCompleted'] == true) return true;
+    final size = (map['size'] as num?)?.toInt() ?? 0;
+    final sent = (map['uploadedSize'] as num?)?.toInt() ?? 0;
+    if (size > 0 && sent >= size) return true;
+    if (map['isUploadingActive'] == false && sent > 0 && sent == size) {
+      return true;
+    }
+    return false;
+  }
+
   Future<Map<String, dynamic>> _uploadTelegramDocument({
     required int chatId,
     required String path,
@@ -398,7 +415,7 @@ class DriveRepositoryImpl implements DriveRepository {
       final size = (event['size'] as num?)?.toInt() ?? 0;
       final sent = (event['uploadedSize'] as num?)?.toInt() ?? 0;
       if (size > 0) onProgress?.call((sent / size).clamp(0.0, 1.0).toDouble());
-      if (event['isUploadingCompleted'] == true && !complete.isCompleted) {
+      if (_isUploadDone(event) && !complete.isCompleted) {
         complete.complete();
       }
     }
@@ -416,12 +433,7 @@ class DriveRepositoryImpl implements DriveRepository {
       }
       final buffered = pendingEvents[uploadedFileId];
       if (buffered != null) consume(buffered);
-      if (result['isUploadingCompleted'] == true && !complete.isCompleted) {
-        complete.complete();
-      }
-      // Some TDLib builds only return SendMessage after the document is fully
-      // uploaded and do not emit a later UpdateFile for very small documents.
-      if (result['isUploadingActive'] != true && !complete.isCompleted) {
+      if (_isUploadDone(result) && !complete.isCompleted) {
         complete.complete();
       }
       await complete.future.timeout(
@@ -695,9 +707,13 @@ class DriveRepositoryImpl implements DriveRepository {
 
   @override
   Future<DriveFile> renameFile(DriveFile file, String newName) async {
-    final trimmed = newName.trim();
+    var trimmed = newName.trim();
     if (trimmed.isEmpty || trimmed.contains('/') || trimmed.contains('\\')) {
       throw ArgumentError('Enter a valid file name.');
+    }
+    final oldExt = _extension(file.name);
+    if (oldExt.isNotEmpty && _extension(trimmed).isEmpty) {
+      trimmed = '$trimmed.$oldExt';
     }
     if (trimmed == file.name) return file;
     final sourcePath = await downloadFile(file: file);

@@ -12,6 +12,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
 import '../../../../core/utils/file_utils.dart';
 import '../../../../core/widgets/common_widgets.dart';
+import '../../../../services/files/file_action_service.dart';
 import '../../domain/entities/drive_file.dart';
 import '../providers/drive_provider.dart';
 
@@ -267,6 +268,23 @@ class _FileDetailsScreenState extends ConsumerState<FileDetailsScreen> {
                               : AppText.download,
                     ),
                   ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                IconButton.outlined(
+                  tooltip: 'Share',
+                  onPressed: () async {
+                    try {
+                      await FileActionService.share(
+                          ref.read(driveRepositoryProvider), file);
+                    } catch (e) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('${AppText.shareFailed}$e')),
+                        );
+                      }
+                    }
+                  },
+                  icon: const Icon(Icons.share_outlined),
                 ),
                 const SizedBox(width: AppSpacing.sm),
                 Expanded(

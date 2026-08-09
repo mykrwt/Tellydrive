@@ -91,11 +91,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 _Section(
                   title: 'Telegram connection',
                   children: [
-                    const ListTile(
-                      leading: Icon(Icons.telegram, color: Color(0xFF229ED9)),
-                      title: Text('TDLib connection'),
-                      subtitle: Text('Telegram is the only storage backend'),
-                      trailing: _StatusDot(label: 'Connected', color: Colors.green),
+                    ListTile(
+                      leading: Icon(Icons.telegram, color: Theme.of(context).colorScheme.onSurface),
+                      title: const Text('TDLib connection'),
+                      subtitle: const Text('Telegram is the only storage backend'),
+                      trailing: const _StatusDot(label: 'Connected', color: Colors.green),
                     ),
                     ListTile(
                       leading: const Icon(Icons.refresh),

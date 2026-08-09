@@ -155,8 +155,8 @@ fun getMe(onResult: (Map<String, Any?>) -> Unit, onErr: (String) -> Unit) {
 }
 
     /**
-     * Load chat list, then return only channels/supergroups where the user
-     * is Creator or Admin with canPostMessages rights.
+     * Load chat list, then return channels, supergroups, and basic groups where the user
+     * can post messages.
      */
     fun getMyChats(limit: Int, onResult: (List<Map<String, Any>>) -> Unit, onErr: (String) -> Unit) {
         client?.send(TdApi.LoadChats(TdApi.ChatListMain(), limit)) { loadObj ->
@@ -180,7 +180,6 @@ fun getMe(onResult: (Map<String, Any?>) -> Unit, onErr: (String) -> Unit) {
                             if (chatObj is TdApi.Chat) {
                                 val chatType = chatObj.type
                                 if (chatType is TdApi.ChatTypeSupergroup) {
-                                    // Check admin rights via GetSupergroup
                                     client?.send(TdApi.GetSupergroup(chatType.supergroupId)) { sgObj ->
                                         if (sgObj is TdApi.Supergroup) {
                                             val status = sgObj.status
@@ -199,18 +198,44 @@ fun getMe(onResult: (Map<String, Any?>) -> Unit, onErr: (String) -> Unit) {
                                             }
                                         }
                                         if (remaining.decrementAndGet() <= 0) {
-                                            mainHandler.post { onResult(results) }
+                                            val sorted = results.sortedBy { (it["title"] as? String)?.lowercase() ?: "" }
+                                            mainHandler.post { onResult(sorted) }
+                                        }
+                                    }
+                                } else if (chatType is TdApi.ChatTypeBasicGroup) {
+                                    client?.send(TdApi.GetBasicGroup(chatType.basicGroupId)) { bgObj ->
+                                        if (bgObj is TdApi.BasicGroup) {
+                                            val status = bgObj.status
+                                            val canPost = when (status) {
+                                                is TdApi.ChatMemberStatusCreator,
+                                                is TdApi.ChatMemberStatusAdministrator,
+                                                is TdApi.ChatMemberStatusMember -> true
+                                                else -> false
+                                            }
+                                            if (canPost) {
+                                                results.add(mapOf(
+                                                    "id" to chatObj.id,
+                                                    "title" to chatObj.title,
+                                                    "isChannel" to false,
+                                                    "type" to "group"
+                                                ))
+                                            }
+                                        }
+                                        if (remaining.decrementAndGet() <= 0) {
+                                            val sorted = results.sortedBy { (it["title"] as? String)?.lowercase() ?: "" }
+                                            mainHandler.post { onResult(sorted) }
                                         }
                                     }
                                 } else {
-                                    // Not a supergroup/channel — skip
                                     if (remaining.decrementAndGet() <= 0) {
-                                        mainHandler.post { onResult(results) }
+                                        val sorted = results.sortedBy { (it["title"] as? String)?.lowercase() ?: "" }
+                                        mainHandler.post { onResult(sorted) }
                                     }
                                 }
                             } else {
                                 if (remaining.decrementAndGet() <= 0) {
-                                    mainHandler.post { onResult(results) }
+                                    val sorted = results.sortedBy { (it["title"] as? String)?.lowercase() ?: "" }
+                                    mainHandler.post { onResult(sorted) }
                                 }
                             }
                         }

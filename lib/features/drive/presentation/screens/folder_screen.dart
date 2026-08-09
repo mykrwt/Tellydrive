@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:share_plus/share_plus.dart';
 import 'dart:io';
 import '../../../../core/constants/app_text.dart';
 import '../../../../core/widgets/common_widgets.dart';
+import '../../../../services/files/file_action_service.dart';
 import '../../domain/entities/drive_file.dart';
 import '../providers/drive_provider.dart';
 import '../widgets/file_grid_item.dart';
@@ -95,7 +95,10 @@ class _FolderScreenState extends ConsumerState<FolderScreen> {
 
   Future<void> _downloadFile(DriveFile file) async {
     try {
-      await ref.read(driveRepositoryProvider).downloadFile(file: file);
+      await FileActionService.downloadToDevice(
+        ref.read(driveRepositoryProvider),
+        file,
+      );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('${file.name} ${AppText.downloadedSnack}')),
@@ -109,18 +112,13 @@ class _FolderScreenState extends ConsumerState<FolderScreen> {
   }
 
   Future<void> _shareFile(DriveFile file) async {
-    var path = file.localPath;
-    if (path == null || path.isEmpty || !File(path).existsSync()) {
-      try {
-        path = await ref.read(driveRepositoryProvider).downloadFile(file: file);
-      } catch (e) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${AppText.shareFailed}$e')),
-        );
-        return;
-      }
+    try {
+      await FileActionService.share(ref.read(driveRepositoryProvider), file);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${AppText.shareFailed}$e')),
+      );
     }
-    await SharePlus.instance.share(ShareParams(files: [XFile(path)], text: file.name));
   }
 }

@@ -253,6 +253,23 @@ class TelegramPlugin(private val context: Context) :
                 )
             }
             "isOnWifi" -> result.success(manager.isOnWifi())
+            "isCharging" -> result.success(manager.isCharging())
+            "showNotification" -> {
+                val title = call.argument<String>("title") ?: ""
+                val body = call.argument<String>("body") ?: ""
+                val id = call.argument<Int>("id") ?: 1
+                val channelId = call.argument<String>("channelId") ?: "teledrive_transfers"
+                val channelName = call.argument<String>("channelName") ?: "Transfers"
+                try {
+                    manager.showNotification(title, body, id, channelId, channelName)
+                    result.success(null)
+                } catch (e: Exception) {
+                    result.error("NOTIFICATION_ERROR", e.message ?: "Unable to post notification", null)
+                }
+            }
+            "getCacheSizeBytes" -> {
+                manager.getCacheSizeBytes { bytes -> result.success(bytes) }
+            }
             "materializeFile" -> {
                 val uri = call.argument<String>("uri") ?: ""
                 if (!uri.startsWith("content://")) {

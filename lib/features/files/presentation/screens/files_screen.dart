@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:open_filex/open_filex.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../../core/utils/file_utils.dart';
 import '../../../../services/files/file_action_service.dart';
@@ -244,8 +245,10 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
     });
   }
 
-  Future<bool> _confirm(String title, String message) async =>
-      await showDialog<bool>(
+  Future<bool> _confirm(String title, String message) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!(prefs.getBool('confirm_before_delete') ?? true)) return true;
+    return await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
           title: Text(title),
@@ -259,7 +262,9 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
             ),
           ],
         ),
-      ) ?? false;
+      ) ??
+      false;
+  }
 
   Future<void> _moveOrCopy(List<DriveFile> files, DriveState state, {required bool move}) async {
     final destination = await _chooseFolder(state, title: move ? 'Move to' : 'Copy to');

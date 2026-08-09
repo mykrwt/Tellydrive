@@ -7,9 +7,10 @@ import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../../core/constants/app_constants.dart';
+import '../../../../services/files/file_action_service.dart';
 import '../../../drive/domain/entities/drive_file.dart';
 import '../../../drive/presentation/providers/drive_provider.dart';
-import '../../../../services/files/file_action_service.dart';
 import '../providers/gallery_provider.dart';
 import 'gallery_viewer_screen.dart';
 
@@ -23,12 +24,19 @@ class GalleryScreen extends ConsumerStatefulWidget {
 class _GalleryScreenState extends ConsumerState<GalleryScreen> {
   final Set<String> _selected = {};
   bool _busy = false;
-  // Pinch-to-zoom: number of columns (2 = large, 5 = small). Persisted.
-  int _columns = 3;
+
+  // Smooth, continuous pinch-to-zoom. [_targetColumns] is a fractional column
+  // count the gesture writes to; the grid interpolates toward it so resizing
+  // never jumps. Apple-style: pinch out (expand) → zoom in → fewer/larger
+  // tiles; pinch in (contract) → zoom out → more/smaller tiles.
+  static const _minColumns = 2.0;
+  static const _maxColumns = 8.0;
+  double _targetColumns = 3.0;
+  double _pinchBase = 3.0;
+  int _lastColumnHint = 3;
   bool _showZoomHint = false;
-  bool _pinchConsumed = false;
-  static const _minColumns = 2;
-  static const _maxColumns = 5;
+  bool _pinchEnabled = true;
+  Timer? _hintTimer;
 
   String _key(DriveFile file) => '${file.folderId}:${file.id}';
 
@@ -59,24 +67,34 @@ class _GalleryScreenState extends ConsumerState<GalleryScreen> {
   List<DriveFile> _selectedFiles(List<DriveFile> media) =>
       media.where((file) => _selected.contains(_key(file))).toList();
 
+  Future<bool> _confirmDelete(int count) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!(prefs.getBool(PrefKeys.confirmBeforeDelete) ?? true)) return true;
+    if (!mounted) return false;
+    return await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text(count == 1 ? 'Delete this item?' : 'Delete $count items?'),
+            content: const Text(
+                'This permanently deletes the Telegram messages and cannot be undone.'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel')),
+              FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
   Future<void> _delete(List<DriveFile> files) async {
     if (files.isEmpty) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(files.length == 1 ? 'Delete this item?' : 'Delete ${files.length} items?'),
-        content: const Text('This permanently deletes the Telegram messages and cannot be undone.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
+    if (!await _confirmDelete(files.length)) return;
     setState(() => _busy = true);
     try {
       await ref.read(galleryProvider.notifier).delete(files);
@@ -132,68 +150,73 @@ class _GalleryScreenState extends ConsumerState<GalleryScreen> {
   @override
   void initState() {
     super.initState();
-    _loadColumns();
+    _loadPrefs();
   }
 
-  Future<void> _loadColumns() async {
+  Future<void> _loadPrefs() async {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
         final sp = await SharedPreferences.getInstance();
-        final saved = sp.getInt('gallery_columns');
-        if (saved != null && saved >= _minColumns && saved <= _maxColumns && mounted) {
-          setState(() => _columns = saved);
+        final saved = sp.getInt(PrefKeys.galleryColumns) ?? 3;
+        final pinch = sp.getBool(PrefKeys.galleryPinchZoom) ?? true;
+        if (mounted) {
+          setState(() {
+            _targetColumns = saved.toDouble().clamp(_minColumns, _maxColumns);
+            _lastColumnHint = saved;
+            _pinchEnabled = pinch;
+          });
         }
       } catch (_) {}
     });
   }
 
-  Future<void> _saveColumns(int columns) async {
+  Future<void> _persistColumns() async {
     try {
       final sp = await SharedPreferences.getInstance();
-      await sp.setInt('gallery_columns', columns);
+      await sp.setInt(PrefKeys.galleryColumns, _targetColumns.round());
     } catch (_) {}
   }
 
   void _handleScaleStart(ScaleStartDetails _) {
-    _pinchConsumed = false;
+    _pinchBase = _targetColumns;
   }
 
   void _handleScaleUpdate(ScaleUpdateDetails details) {
-    if (_pinchConsumed) return;
-    final scale = details.scale;
-    if (scale > 1.25 && _columns > _minColumns) {
+    if (!_pinchEnabled) return;
+    // Only react to genuine two-finger scaling, not incidental drag.
+    if ((details.scale - 1).abs() < 0.02) return;
+    final desired = (_pinchBase / details.scale).clamp(_minColumns, _maxColumns);
+    final newInt = desired.round();
+    if (newInt != _lastColumnHint) {
+      _lastColumnHint = newInt;
       HapticFeedback.selectionClick();
-      setState(() {
-        _columns--;
-        _showZoomHint = true;
-        _pinchConsumed = true;
-      });
-      _saveColumns(_columns);
-      Future.delayed(const Duration(milliseconds: 900), () {
-        if (mounted) setState(() => _showZoomHint = false);
-      });
-    } else if (scale < 0.75 && _columns < _maxColumns) {
-      HapticFeedback.selectionClick();
-      setState(() {
-        _columns++;
-        _showZoomHint = true;
-        _pinchConsumed = true;
-      });
-      _saveColumns(_columns);
-      Future.delayed(const Duration(milliseconds: 900), () {
-        if (mounted) setState(() => _showZoomHint = false);
-      });
+      _flashHint();
     }
+    setState(() => _targetColumns = desired);
   }
 
   void _handleScaleEnd(ScaleEndDetails _) {
-    _pinchConsumed = false;
+    _persistColumns();
+  }
+
+  void _flashHint() {
+    _hintTimer?.cancel();
+    setState(() => _showZoomHint = true);
+    _hintTimer = Timer(const Duration(milliseconds: 900), () {
+      if (mounted) setState(() => _showZoomHint = false);
+    });
   }
 
   void _showError(Object error) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(error.toString()), backgroundColor: Colors.red),
     );
+  }
+
+  @override
+  void dispose() {
+    _hintTimer?.cancel();
+    super.dispose();
   }
 
   @override
@@ -239,75 +262,43 @@ class _GalleryScreenState extends ConsumerState<GalleryScreen> {
             child: state.isLoading && state.media.isEmpty
                 ? const Center(child: CircularProgressIndicator())
                 : state.error != null && state.media.isEmpty
-                    ? ListView(children: [
-                        const SizedBox(height: 160),
-                        const Icon(Icons.cloud_off_outlined, size: 54),
-                        const SizedBox(height: 12),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 30),
-                          child: Text(state.error!, textAlign: TextAlign.center),
-                        ),
-                      ])
+                    ? _MessageState(
+                        icon: Icons.cloud_off_outlined,
+                        title: 'Couldn’t load gallery',
+                        message: state.error!,
+                        actionLabel: 'Retry',
+                        onAction: ref.read(galleryProvider.notifier).refresh,
+                      )
                     : state.media.isEmpty
-                        ? ListView(children: const [
-                            SizedBox(height: 180),
-                            Icon(Icons.photo_library_outlined, size: 58),
-                            SizedBox(height: 12),
-                            Text('No photos or videos in Telegram storage', textAlign: TextAlign.center),
-                          ])
+                        ? _MessageState(
+                            icon: Icons.photo_library_outlined,
+                            title: 'No photos or videos yet',
+                            message:
+                                'Media you upload or back up to Telegram will appear here.',
+                          )
                         : GestureDetector(
                             onScaleStart: _handleScaleStart,
                             onScaleUpdate: _handleScaleUpdate,
                             onScaleEnd: _handleScaleEnd,
-                            child: CustomScrollView(
-                              slivers: [
-                                for (final group in groups.entries) ...[
-                                  SliverToBoxAdapter(
-                                    child: Padding(
-                                      padding: const EdgeInsets.fromLTRB(12, 18, 12, 8),
-                                      child: Text(group.key, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-                                    ),
+                            child: _AnimatedGrid(
+                              targetColumns: _targetColumns,
+                              groups: groups,
+                              selected: _selected,
+                              selectionMode: selectionMode,
+                              onToggle: _toggle,
+                              onOpen: (file) {
+                                final itemIndex = state.media.indexOf(file);
+                                Navigator.of(context).push(MaterialPageRoute(
+                                  builder: (_) => GalleryViewerScreen(
+                                    media: state.media,
+                                    initialIndex: itemIndex,
                                   ),
-                                  SliverGrid(
-                                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                      crossAxisCount: _columns,
-                                      mainAxisSpacing: 2,
-                                      crossAxisSpacing: 2,
-                                    ),
-                                    delegate: SliverChildBuilderDelegate(
-                                      (context, index) {
-                                        final file = group.value[index];
-                                        final selected = _selected.contains(_key(file));
-                                        return _GalleryTile(
-                                          file: file,
-                                          selected: selected,
-                                          selectionMode: selectionMode,
-                                          onTap: () {
-                                            if (selectionMode) {
-                                              _toggle(file);
-                                            } else {
-                                              final itemIndex = state.media.indexOf(file);
-                                              Navigator.of(context).push(MaterialPageRoute(
-                                                builder: (_) => GalleryViewerScreen(
-                                                  media: state.media,
-                                                  initialIndex: itemIndex,
-                                                ),
-                                              ));
-                                            }
-                                          },
-                                          onLongPress: () => _toggle(file),
-                                        );
-                                      },
-                                      childCount: group.value.length,
-                                    ),
-                                  ),
-                                ],
-                                const SliverPadding(padding: EdgeInsets.only(bottom: 100)),
-                              ],
+                                ));
+                              },
                             ),
                           ),
           ),
-          if (_showZoomHint)
+          if (_showZoomHint && _pinchEnabled)
             Positioned(
               bottom: 24,
               left: 0,
@@ -322,12 +313,20 @@ class _GalleryScreenState extends ConsumerState<GalleryScreen> {
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
                     const Icon(Icons.grid_view_rounded, color: Colors.white, size: 16),
                     const SizedBox(width: 6),
-                    Text('$_columns columns', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                    Text('${_targetColumns.round()} columns',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600)),
                   ]),
                 ),
               ),
             ),
-          if (_busy) const Positioned.fill(child: ColoredBox(color: Color(0x66000000), child: Center(child: CircularProgressIndicator()))),
+          if (_busy)
+            const Positioned.fill(
+                child: ColoredBox(
+                    color: Color(0x66000000),
+                    child: Center(child: CircularProgressIndicator()))),
         ],
       ),
       bottomNavigationBar: selectionMode
@@ -342,6 +341,132 @@ class _GalleryScreenState extends ConsumerState<GalleryScreen> {
               ),
             )
           : null,
+    );
+  }
+}
+
+/// Grid whose column count smoothly animates toward [targetColumns]. Using a
+/// fractional, interpolated value (with a max-cross-axis-extent delegate) is
+/// what makes resizing feel continuous instead of snapping between sizes.
+class _AnimatedGrid extends StatelessWidget {
+  const _AnimatedGrid({
+    required this.targetColumns,
+    required this.groups,
+    required this.selected,
+    required this.selectionMode,
+    required this.onToggle,
+    required this.onOpen,
+  });
+
+  final double targetColumns;
+  final Map<String, List<DriveFile>> groups;
+  final Set<String> selected;
+  final bool selectionMode;
+  final void Function(DriveFile) onToggle;
+  final void Function(DriveFile) onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 3, end: targetColumns),
+      duration: const Duration(milliseconds: 160),
+      curve: Curves.easeOutCubic,
+      builder: (context, columns, _) {
+        // Convert the fractional column count into a max extent so the grid
+        // reflows smoothly; the integer column count tracks it automatically.
+        final extent = (screenWidth / columns).clamp(48.0, screenWidth / 1.5);
+        return CustomScrollView(
+          slivers: [
+            for (final group in groups.entries) ...[
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 18, 12, 8),
+                  child: Text(group.key,
+                      style: const TextStyle(
+                          fontSize: 20, fontWeight: FontWeight.w700)),
+                ),
+              ),
+              SliverGrid(
+                gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                  maxCrossAxisExtent: extent,
+                  mainAxisSpacing: 2,
+                  crossAxisSpacing: 2,
+                  childAspectRatio: 1,
+                ),
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    final file = group.value[index];
+                    return _GalleryTile(
+                      file: file,
+                      selected:
+                          selected.contains('${file.folderId}:${file.id}'),
+                      selectionMode: selectionMode,
+                      onTap: () {
+                        if (selectionMode) {
+                          onToggle(file);
+                        } else {
+                          onOpen(file);
+                        }
+                      },
+                      onLongPress: () => onToggle(file),
+                    );
+                  },
+                  childCount: group.value.length,
+                ),
+              ),
+            ],
+            const SliverPadding(padding: EdgeInsets.only(bottom: 100)),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _MessageState extends StatelessWidget {
+  const _MessageState({
+    required this.icon,
+    required this.title,
+    required this.message,
+    this.actionLabel,
+    this.onAction,
+  });
+  final IconData icon;
+  final String title;
+  final String message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ListView(
+      children: [
+        const SizedBox(height: 150),
+        Icon(icon, size: 56, color: theme.colorScheme.onSurfaceVariant),
+        const SizedBox(height: 16),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Text(title,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w600)),
+        ),
+        const SizedBox(height: 8),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Text(message,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodySmall),
+        ),
+        if (actionLabel != null && onAction != null) ...[
+          const SizedBox(height: 20),
+          Center(
+            child: OutlinedButton(onPressed: onAction, child: Text(actionLabel!)),
+          ),
+        ],
+      ],
     );
   }
 }

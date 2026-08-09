@@ -8,11 +8,30 @@ No S3, Firebase, Google Drive, Dropbox, or secondary cloud-storage backend is us
 
 The authenticated app has exactly three bottom destinations:
 
-- **Gallery** — three-column, date-grouped Telegram image/video grid; full-screen photo/video viewer; selection, deletion, download, and sharing.
+- **Gallery** — date-grouped Telegram image/video grid with smooth, continuous pinch-to-zoom (2–8 columns), full-screen photo/video viewer; selection, deletion, download, and sharing.
 - **Files** — Telegram storage folders and their real files only; integrated search/sort, list/grid modes, thumbnails/type icons, multi-select, rename, delete, move, copy, download, share, upload, and private-channel folder creation.
-- **Settings** — account, Telegram connection, storage, transfer, gallery, file manager, appearance, notifications, security, backend, FTP server, and app information.
+- **Settings** — account, Auto Backup, downloads & storage, gallery, files, notifications, privacy & security (biometric app lock), local FTP access, appearance, and app information.
 
 Internal chunk and manifest documents are filtered in the repository layer, so they cannot appear in Gallery, Files, search, or FTP listings.
+
+## Auto Backup
+
+Settings → Auto Backup maps local phone folders to specific Telegram destinations. Each rule pairs a watched folder with a drive folder (Saved Messages or a channel), and new files in that folder are uploaded to its destination on a schedule. Rules can be added, edited, enabled/disabled, and removed independently.
+
+Behaviour:
+
+- A monitor scans every enabled rule's folder on a configurable frequency and when the app returns to the foreground; files already backed up (fingerprinted by path + size + modified time) are skipped, so nothing is re-uploaded.
+- Each upload reuses the existing resumable chunked upload pipeline and preserves the original filename; progress appears in the upload strip.
+- Constraints are enforced before and during a pass: Wi-Fi only, allow mobile data, and charging only.
+- Status (last backup time, pending count, last error) is shown in Settings and on the Auto Backup screen.
+- Completion and failure optionally post an Android notification.
+
+Folder access uses Android's directory picker. Folders the OS does not allow the app to read are reported with a clear message rather than failing silently. True background scanning relies on the in-app monitor plus foreground resume; reliable background operation requires the battery-optimization exemption granted during onboarding.
+
+## Onboarding permissions
+
+Before entering the app for the first time, the user must grant notification permission and disable battery optimization for TeleDrive. Each step verifies the real permission state and re-checks on resume, so simply opening system settings is not enough to proceed.
+
 
 ## Telegram and TDLib
 

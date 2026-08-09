@@ -59,7 +59,7 @@ class _CodeVerificationScreenState
     if (!mounted) return;
 
     if (success) {
-      context.go(AppRoutes.drive);
+      context.go(AppRoutes.onboarding);
     } else {
       final state = ref.read(authProvider);
       if (state.step == AuthStep.needs2FA) {

@@ -325,6 +325,58 @@ fun getMe(onResult: (Map<String, Any?>) -> Unit, onErr: (String) -> Unit) {
             capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
     }
 
+    /**
+     * True when the device is currently charging (AC or USB) or the battery
+     * is full while connected to power. Used by the Auto Backup "charging only"
+     * constraint. Uses the protected ACTION_BATTERY_CHANGED sticky broadcast,
+     * which works on all supported Android versions.
+     */
+    fun isCharging(): Boolean {
+        return try {
+            val filter = android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED)
+            val battery = context.registerReceiver(null, filter)
+            val status = battery?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
+            status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+                status == android.os.BatteryManager.BATTERY_STATUS_FULL
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Approximate byte size of the TDLib cache directory so Settings can show
+     * real storage usage. Walks the cache + tdlib file trees off the main
+     * thread by the caller.
+     */
+    fun getCacheSizeBytes(onResult: (Long) -> Unit) {
+        Thread {
+            var total = 0L
+            val candidates = listOf(
+                context.cacheDir,
+                File(context.filesDir, "tdlib/files"),
+                File(context.filesDir, "tdlib")
+            )
+            for (root in candidates) {
+                total += dirSize(root)
+            }
+            mainHandler.post { onResult(total) }
+        }.start()
+    }
+
+    private fun dirSize(dir: File?): Long {
+        if (dir == null || !dir.exists()) return 0L
+        if (dir.isFile) return dir.length()
+        var size = 0L
+        try {
+            dir.walkTopDown().forEach { file ->
+                if (file.isFile) size += file.length()
+            }
+        } catch (e: Exception) {
+            // ignore unreadable entries
+        }
+        return size
+    }
+
     fun materializeFile(
         contentUriString: String,
         onResult: (String) -> Unit,
@@ -571,6 +623,55 @@ fun getMe(onResult: (Map<String, Any?>) -> Unit, onErr: (String) -> Unit) {
                 is TdApi.Ok -> mainHandler.post { onResult() }
                 is TdApi.Error -> mainHandler.post { onErr(obj.message) }
             }
+        }
+    }
+
+    /**
+     * Posts a real Android notification for transfer/backup status. Creates the
+     * required NotificationChannel on Android 8+ and uses a framework upload
+     * icon so no extra drawable resources are required. Returns once posted.
+     */
+    fun showNotification(
+        title: String,
+        body: String,
+        notificationId: Int,
+        channelId: String,
+        channelName: String
+    ) {
+        try {
+            val notificationManager =
+                context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = android.app.NotificationChannel(
+                    channelId,
+                    channelName,
+                    android.app.NotificationManager.IMPORTANCE_LOW
+                ).apply {
+                    description = "TeleDrive transfer and backup status"
+                    setShowBadge(false)
+                }
+                notificationManager.createNotificationChannel(channel)
+            }
+
+            val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                android.app.Notification.Builder(context, channelId)
+            } else {
+                @Suppress("DEPRECATION")
+                android.app.Notification.Builder(context)
+                    .setPriority(android.app.Notification.PRIORITY_LOW)
+            }
+
+            builder
+                .setContentTitle(title)
+                .setContentText(body)
+                .setSmallIcon(android.R.drawable.stat_sys_upload_done)
+                .setOngoing(false)
+                .setAutoCancel(true)
+
+            notificationManager.notify(notificationId, builder.build())
+        } catch (e: Exception) {
+            Log.w(TAG, "showNotification failed: ${e.message}")
         }
     }
 

@@ -34,7 +34,7 @@ class _PasswordScreenState extends ConsumerState<PasswordScreen> {
     if (!mounted) return;
 
     if (success) {
-      context.go(AppRoutes.drive);
+      context.go(AppRoutes.onboarding);
     }
   }
 

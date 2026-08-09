@@ -16,10 +16,13 @@ import '../../features/preview/presentation/screens/audio_preview_screen.dart';
 import '../../features/preview/presentation/screens/pdf_preview_screen.dart';
 import '../../features/search/presentation/screens/search_screen.dart';
 import '../../features/settings/presentation/screens/settings_screen.dart';
+import '../../features/settings/presentation/screens/auto_backup_screen.dart';
 import '../../features/settings/presentation/screens/privacy_policy_screen.dart';
 import '../../features/settings/presentation/screens/terms_of_use_screen.dart';
+import '../../features/onboarding/presentation/screens/onboarding_permissions_screen.dart';
 import '../../features/auth/presentation/providers/auth_provider.dart';
 import '../../services/storage/secure_storage_service.dart';
+import '../../core/constants/app_constants.dart';
 
 // Route names
 class AppRoutes {
@@ -27,6 +30,7 @@ class AppRoutes {
   static const String login = '/login';
   static const String verifyCode = '/verify-code';
   static const String verifyPassword = '/verify-password';
+  static const String onboarding = '/onboarding';
   static const String drive = '/drive';
   static const String folder = '/folder/:folderId';
   static const String fileDetails = '/file/:fileId';
@@ -36,6 +40,7 @@ class AppRoutes {
   static const String previewPdf = '/preview/pdf/:fileId';
   static const String search = '/search';
   static const String settings = '/settings';
+  static const String autoBackup = '/settings/auto-backup';
   static const String privacyPolicy = '/settings/privacy-policy';
   static const String termsOfUse = '/settings/terms-of-use';
   static const String shareToDrive = '/share-to-drive';
@@ -77,7 +82,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       if (uriString.startsWith('content://') ||
           uriString.startsWith('file://')) {
         final isLoggedIn = await SecureStorageService.instance.isLoggedIn();
-        return isLoggedIn ? AppRoutes.drive : AppRoutes.welcome;
+        if (!isLoggedIn) return AppRoutes.welcome;
+        final onboarded = (await SecureStorageService.instance
+                .read(StorageKeys.onboardingCompleted)) ==
+            'true';
+        return onboarded ? AppRoutes.drive : AppRoutes.onboarding;
       }
 
       final isLoggedIn = await SecureStorageService.instance.isLoggedIn();
@@ -85,6 +94,21 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           state.matchedLocation == AppRoutes.login ||
           state.matchedLocation == AppRoutes.verifyCode ||
           state.matchedLocation == AppRoutes.verifyPassword;
+      final isOnboarding = state.matchedLocation == AppRoutes.onboarding;
+
+      final onboarded = (await SecureStorageService.instance
+              .read(StorageKeys.onboardingCompleted)) ==
+          'true';
+
+      // Logged-in user who finished auth but hasn't completed onboarding must
+      // stay on the permission gate — no matter which route they request.
+      if (isLoggedIn && !onboarded && !isOnAuth && !isOnboarding) {
+        return AppRoutes.onboarding;
+      }
+      // An already-onboarded user shouldn't see the gate again.
+      if (isLoggedIn && onboarded && isOnboarding) {
+        return AppRoutes.drive;
+      }
 
       if (isLoggedIn && isOnAuth) {
         if (!isRestoringSession) {
@@ -96,7 +120,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             isRestoringSession = false;
           }
         }
-        return AppRoutes.drive;
+        return onboarded ? AppRoutes.drive : AppRoutes.onboarding;
       }
       return null;
     },
@@ -119,6 +143,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.verifyPassword,
         builder: (context, state) => const PasswordScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.onboarding,
+        builder: (context, state) => const OnboardingPermissionsScreen(),
       ),
       GoRoute(
         path: AppRoutes.drive,
@@ -181,6 +209,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.settings,
         builder: (context, state) => const SettingsScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.autoBackup,
+        builder: (context, state) => const AutoBackupScreen(),
       ),
       GoRoute(
         path: AppRoutes.privacyPolicy,

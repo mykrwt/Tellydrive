@@ -126,35 +126,33 @@ class AuthNotifier extends StateNotifier<AuthState> {
   String _cleanError(Object e) {
     final msg = e.toString().replaceFirst('Exception: ', '');
 
-    // Make TDLib errors user-friendly
+    // Make TDLib errors user-friendly — quick no-network detection gets a clear message.
     if (msg.contains(AppText.registrationRequired)) {
       return AppText.registrationRequiredMessage;
     }
-
     if (msg.contains(AppText.phoneNumberInvalidKey)) {
       return AppText.phoneNumberInvalidMessage;
     }
-
     if (msg.contains('PHONE_CODE_INVALID')) {
       return AppText.phoneCodeInvalidMessage;
     }
-
     if (msg.contains('PHONE_CODE_EXPIRED')) {
       return AppText.phoneCodeExpiredMessage;
     }
-
     if (msg.contains('PASSWORD_HASH_INVALID')) {
       return AppText.passwordHashInvalidMessage;
     }
-
-    if (msg.contains('timed out') ||
-        msg.contains('TimeoutException') ||
-        msg.contains('Network is unreachable') ||
-        msg.contains('Connection refused') ||
-        msg.contains('Failed host lookup')) {
+    final lower = msg.toLowerCase();
+    if (lower.contains('timed out') ||
+        lower.contains('timeoutexception') ||
+        lower.contains('operation timed out') ||
+        lower.contains('network is unreachable') ||
+        lower.contains('connection refused') ||
+        lower.contains('failed host lookup') ||
+        lower.contains('socketexception') ||
+        lower.contains('connection timed out')) {
       return AppText.connectionTimedOut;
     }
-
     return msg;
   }
 }

@@ -91,16 +91,25 @@ class _VideoPreviewScreenState extends ConsumerState<VideoPreviewScreen> {
   @override
   Widget build(BuildContext context) {
     final driveState = ref.watch(driveProvider);
-    final file =
-        driveState.files.where((f) => f.id == widget.fileId).firstOrNull;
+    final file = driveState.files.where((f) => f.id == widget.fileId).firstOrNull;
+    if (file != null && file.isIncomplete) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        appBar: AppBar(backgroundColor: Colors.black, iconTheme: const IconThemeData(color: Colors.white)),
+        body: Center(
+          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: const [
+            Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 64),
+            SizedBox(height: 16),
+            Text('Incomplete file', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w700)),
+            SizedBox(height: 8),
+            Text('Upload was interrupted. Delete or re-upload.', style: TextStyle(color: Colors.white38, fontSize: 13), textAlign: TextAlign.center),
+          ]),
+        ),
+      );
+    }
     final existingPath = _downloadedPath ?? file?.localPath;
-    if (_chewieController == null &&
-        existingPath != null &&
-        existingPath.isNotEmpty &&
-        File(existingPath).existsSync()) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _initPlayer(existingPath);
-      });
+    if (_chewieController == null && existingPath != null && existingPath.isNotEmpty && File(existingPath).existsSync()) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _initPlayer(existingPath));
     }
 
     return Scaffold(
@@ -108,47 +117,24 @@ class _VideoPreviewScreenState extends ConsumerState<VideoPreviewScreen> {
       appBar: AppBar(
         backgroundColor: Colors.black,
         iconTheme: const IconThemeData(color: Colors.white),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.share_rounded, color: Colors.white),
-            onPressed: _share,
-          ),
-        ],
+        actions: [IconButton(icon: const Icon(Icons.share_rounded, color: Colors.white), onPressed: _share)],
       ),
       body: Center(
         child: _chewieController != null
-            ? AspectRatio(
-                aspectRatio: _vpController?.value.aspectRatio ?? (16 / 9),
-                child: Chewie(controller: _chewieController!),
-              )
-            : Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.movie_rounded,
-                      color: Colors.white54, size: 80),
-                  const SizedBox(height: 24),
-                  Text(
-                    file?.name ?? '',
-                    style: const TextStyle(color: Colors.white70, fontSize: 16),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    AppText.downloadToPlayVideo,
-                    style: TextStyle(color: Colors.white38, fontSize: 13),
-                  ),
-                  const SizedBox(height: 24),
-                  ElevatedButton.icon(
-                    onPressed: _isDownloading ? null : _download,
-                    icon: Icon(_isDownloading
-                        ? Icons.downloading_rounded
-                        : Icons.download_rounded),
-                    label: Text(_isDownloading
-                        ? AppText.downloading
-                        : AppText.downloadToPlay),
-                  ),
-                ],
-              ),
+            ? AspectRatio(aspectRatio: _vpController?.value.aspectRatio ?? (16 / 9), child: Chewie(controller: _chewieController!))
+            : Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                const Icon(Icons.movie_rounded, color: Colors.white54, size: 80),
+                const SizedBox(height: 24),
+                Text(file?.name ?? '', style: const TextStyle(color: Colors.white70, fontSize: 16), textAlign: TextAlign.center),
+                const SizedBox(height: 8),
+                const Text(AppText.downloadToPlayVideo, style: TextStyle(color: Colors.white38, fontSize: 13)),
+                const SizedBox(height: 24),
+                ElevatedButton.icon(
+                  onPressed: _isDownloading ? null : _download,
+                  icon: Icon(_isDownloading ? Icons.downloading_rounded : Icons.download_rounded),
+                  label: Text(_isDownloading ? AppText.downloading : AppText.downloadToPlay),
+                ),
+              ]),
       ),
     );
   }

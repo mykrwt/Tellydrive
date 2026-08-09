@@ -13,6 +13,7 @@ import '../../domain/entities/drive_file.dart';
 import '../../domain/entities/drive_folder.dart';
 import '../../domain/repositories/drive_repository.dart';
 import '../../../../core/constants/app_constants.dart';
+import '../../../../services/files/file_identification.dart';
 import '../../../../services/platform/native_telegram_channel.dart';
 import '../../../../services/transfers/chunk_metadata.dart';
 
@@ -133,7 +134,9 @@ class DriveRepositoryImpl implements DriveRepository {
   }
 
   DriveFile _normalFile(Map<String, dynamic> map, String folderId) {
-    final name = (map['fileName'] ?? map['name'] ?? 'Unknown File').toString();
+    final storedName = (map['fileName'] ?? map['name'] ?? 'Unknown File').toString();
+    // Display name strips the app prefix; storedName retains it for identification.
+    final displayName = FileIdentification.decode(storedName);
     final local = (map['localPath'] ?? '').toString();
     final thumb = (map['thumbnailPath'] ?? '').toString();
     final messageId = map['messageId']?.toString() ?? '0';
@@ -142,8 +145,8 @@ class DriveRepositoryImpl implements DriveRepository {
       telegramMessageId: messageId,
       telegramMessageIds: [messageId],
       folderId: folderId,
-      name: name,
-      type: _resolveType({...map, 'fileName': name}),
+      name: displayName,
+      type: _resolveType({...map, 'fileName': displayName}),
       size: (map['size'] as num?)?.toInt() ?? 0,
       uploadedAt: _dateOf(map),
       localPath: local.isEmpty ? null : local,
@@ -184,6 +187,9 @@ class DriveRepositoryImpl implements DriveRepository {
         // Internal artifacts are intentionally never user-facing.
         continue;
       } else {
+        // App identification: files are recognized instantly by fileName prefix
+        // without downloading content. Legacy files without prefix remain
+        // visible for backward compatibility but new uploads always carry it.
         visible.add(_normalFile(map, resolvedFolder));
       }
     }
@@ -219,14 +225,15 @@ class DriveRepositoryImpl implements DriveRepository {
         ),
         ...rawParts.map((part) => part['messageId']?.toString() ?? '0'),
       ];
+      final displayName = FileIdentification.decode(metadata.originalName);
       visible.add(DriveFile(
         id: 'chunked:${metadata.uploadId}',
         telegramMessageId: manifestMessage,
         telegramMessageIds: allMessages,
         folderId: resolvedFolder,
-        name: metadata.originalName,
+        name: displayName,
         type: _resolveType({
-          'fileName': metadata.originalName,
+          'fileName': displayName,
           'mimeType': metadata.mimeType,
         }),
         size: metadata.originalSize,
@@ -286,15 +293,15 @@ class DriveRepositoryImpl implements DriveRepository {
     required DriveFile file,
     void Function(double progress)? onProgress,
   }) async {
+    // Never treat an incomplete upload as a valid file — fail fast with a
+    // clear message instead of crashing or returning partial data.
+    if (file.isIncomplete) {
+      throw StateError(
+        'This file is incomplete — the upload was interrupted. Please re-upload the original file to resume.',
+      );
+    }
     if (!file.isChunked) {
       return _downloadTelegramFile(int.parse(file.id), onProgress: onProgress);
-    }
-    final hasMissingPart = file.chunks.isEmpty ||
-        file.chunks.asMap().entries.any((entry) => entry.key != entry.value.index);
-    if (hasMissingPart) {
-      throw StateError(
-        'This upload is incomplete. Re-select the original file to resume it.',
-      );
     }
     final support = await getApplicationSupportDirectory();
     final directory = Directory(p.join(
@@ -342,13 +349,21 @@ class DriveRepositoryImpl implements DriveRepository {
 
   @override
   Future<String?> downloadThumbnail(DriveFile file) async {
-    final existing = file.thumbnailUrl;
-    if (existing != null && existing.isNotEmpty && await File(existing).exists()) {
-      return existing;
+    // Incomplete files have no reliable thumbnail — avoid attempting download
+    // which would otherwise throw and potentially crash the tile.
+    if (file.isIncomplete) return null;
+    try {
+      final existing = file.thumbnailUrl;
+      if (existing != null && existing.isNotEmpty && await File(existing).exists()) {
+        return existing;
+      }
+      final id = int.tryParse(file.thumbnailFileId ?? '');
+      if (id == null) return file.localPath;
+      return await _downloadTelegramFile(id);
+    } catch (_) {
+      // Return fallback instead of crashing the UI.
+      return file.localPath;
     }
-    final id = int.tryParse(file.thumbnailFileId ?? '');
-    if (id == null) return file.localPath;
-    return _downloadTelegramFile(id);
   }
 
   String _safeFileName(String name) => name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
@@ -474,11 +489,14 @@ class DriveRepositoryImpl implements DriveRepository {
     }
     final source = File(localPath);
     if (!await source.exists()) throw FileSystemException('File not found', localPath);
+    // App-specific identification: prefix the stored name so reinstalls can
+    // recognise own files instantly without scanning contents.
+    final encodedName = FileIdentification.encode(fileName);
     final size = await source.length();
     if (size <= AppConstants.telegramDirectUploadBytes) {
       Directory? stagingDirectory;
       var uploadPath = localPath;
-      final expectedName = _safeFileName(fileName);
+      final expectedName = _safeFileName(encodedName);
       if (p.basename(localPath) != expectedName) {
         final temporary = await getTemporaryDirectory();
         stagingDirectory = Directory(p.join(
@@ -496,7 +514,8 @@ class DriveRepositoryImpl implements DriveRepository {
           path: uploadPath,
           onProgress: onProgress,
         );
-        return _uploadedNormal(result, localPath, fileName, folderId, size: size);
+        // Return with user-visible (decoded) name; Telegram stores encoded name.
+        return _uploadedNormal(result, localPath, fileName, folderId, size: size, storedName: encodedName);
       } finally {
         if (stagingDirectory != null && await stagingDirectory.exists()) {
           await stagingDirectory.delete(recursive: true);
@@ -505,8 +524,9 @@ class DriveRepositoryImpl implements DriveRepository {
     }
     return _uploadChunked(
       source: source,
-      originalName: fileName,
+      originalName: encodedName,
       originalSize: size,
+      displayName: fileName,
       folderId: folderId,
       chatId: chatId,
       onProgress: onProgress,
@@ -515,15 +535,16 @@ class DriveRepositoryImpl implements DriveRepository {
 
   DriveFile _uploadedNormal(Map<String, dynamic> result, String localPath,
       String fileName, String folderId,
-      {int? size}) {
+      {int? size, String? storedName}) {
     final messageId = result['messageId']?.toString() ?? '0';
-    final mimeType = lookupMimeType(fileName) ?? 'application/octet-stream';
+    // Use storedName (encoded) for MIME/type if needed, but display decoded.
+    final mimeType = lookupMimeType(storedName ?? fileName) ?? lookupMimeType(fileName) ?? 'application/octet-stream';
     return DriveFile(
       id: result['fileId']?.toString() ?? '0',
       telegramMessageId: messageId,
       telegramMessageIds: [messageId],
       folderId: folderId,
-      name: fileName,
+      name: FileIdentification.decode(fileName),
       type: _resolveType({'fileName': fileName, 'mimeType': mimeType}),
       size: size ?? (result['size'] as num?)?.toInt() ?? 0,
       uploadedAt: DateTime.now(),
@@ -540,6 +561,7 @@ class DriveRepositoryImpl implements DriveRepository {
     required String folderId,
     required int chatId,
     void Function(double progress)? onProgress,
+    String? displayName,
   }) async {
     final modified = (await source.lastModified()).millisecondsSinceEpoch;
     final key = _resumeKey(source.path, originalName, originalSize, modified);
@@ -651,6 +673,7 @@ class DriveRepositoryImpl implements DriveRepository {
       size: part['size'] as int,
     )).toList();
     final manifestMessage = manifestResult['messageId']?.toString() ?? '0';
+    final finalDisplay = displayName ?? FileIdentification.decode(originalName);
     return DriveFile(
       id: 'chunked:$uploadId',
       telegramMessageId: manifestMessage,
@@ -659,8 +682,8 @@ class DriveRepositoryImpl implements DriveRepository {
         ...chunks.map((chunk) => chunk.telegramMessageId),
       ],
       folderId: folderId,
-      name: originalName,
-      type: _resolveType({'fileName': originalName, 'mimeType': mimeType}),
+      name: finalDisplay,
+      type: _resolveType({'fileName': finalDisplay, 'mimeType': mimeType}),
       size: originalSize,
       uploadedAt: DateTime.now(),
       localPath: source.path,

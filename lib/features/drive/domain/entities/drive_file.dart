@@ -47,6 +47,20 @@ class DriveFile {
 
   bool get isChunked => chunkUploadId != null;
 
+  /// True if this is a chunked file that hasn't been fully uploaded.
+  /// Covers: no chunks, missing indexes, non-contiguous parts.
+  bool get isIncomplete {
+    if (!isChunked) return false;
+    if (chunks.isEmpty) return true;
+    final sorted = [...chunks]..sort((a, b) => a.index.compareTo(b.index));
+    for (var i = 0; i < sorted.length; i++) {
+      if (sorted[i].index != i) return true;
+    }
+    return false;
+  }
+
+  bool get isValid => !isIncomplete;
+
   List<String> get allTelegramMessageIds => telegramMessageIds.isNotEmpty
       ? telegramMessageIds
       : <String>[telegramMessageId];

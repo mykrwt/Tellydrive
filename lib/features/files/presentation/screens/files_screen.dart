@@ -144,6 +144,15 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
   }
 
   Future<void> _createFolder() async {
+    // Folder structure is strictly single-level — no nesting.
+    if (!_atRoot) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Folders can only be created at the top level. Go back to the folder list to create a new folder.')),
+        );
+      }
+      return;
+    }
     final controller = TextEditingController();
     final value = await showDialog<String>(
       context: context,
@@ -286,6 +295,14 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
   }
 
   Future<void> _openFile(DriveFile file, List<DriveFile> visible) async {
+    if (file.isIncomplete) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('This file is incomplete and cannot be opened. Delete it or re-upload the original file.')),
+        );
+      }
+      return;
+    }
     if (file.type == DriveFileType.image || file.type == DriveFileType.video) {
       final media = visible.where((item) => item.type == DriveFileType.image || item.type == DriveFileType.video).toList();
       await Navigator.of(context).push(MaterialPageRoute(
@@ -294,10 +311,14 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
       return;
     }
     await _run(() async {
-      final path = await ref.read(driveRepositoryProvider).downloadFile(file: file);
-      final result = await OpenFilex.open(path);
-      if (result.type != ResultType.done && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result.message)));
+      try {
+        final path = await ref.read(driveRepositoryProvider).downloadFile(file: file);
+        final result = await OpenFilex.open(path);
+        if (result.type != ResultType.done && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result.message)));
+        }
+      } catch (e) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString()), backgroundColor: Colors.red));
       }
     });
   }
@@ -632,6 +653,7 @@ class _FileListTileState extends ConsumerState<_FileListTile> {
 
   @override
   Widget build(BuildContext context) {
+    final incomplete = widget.file.isIncomplete;
     return ListTile(
       selected: widget.selected,
       selectedTileColor: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
@@ -644,20 +666,36 @@ class _FileListTileState extends ConsumerState<_FileListTile> {
                 color: widget.selected
                     ? Theme.of(context).colorScheme.onSurface
                     : Theme.of(context).colorScheme.surfaceContainerHighest,
-                border: Border.all(
-                  color: Theme.of(context).colorScheme.outline,
-                  width: 1.5,
-                ),
+                border: Border.all(color: Theme.of(context).colorScheme.outline, width: 1.5),
               ),
-              child: widget.selected
-                  ? Icon(Icons.check, size: 15, color: Theme.of(context).colorScheme.surface)
-                  : null,
+              child: widget.selected ? Icon(Icons.check, size: 15, color: Theme.of(context).colorScheme.surface) : null,
             )
-          : _FileVisual(file: widget.file, thumbnail: thumbnail, size: 48),
-      title: Text(widget.file.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+          : Stack(children: [
+              _FileVisual(file: widget.file, thumbnail: thumbnail, size: 48),
+              if (incomplete)
+                Positioned.fill(
+                  child: Container(
+                    decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.45), borderRadius: BorderRadius.circular(8)),
+                    child: const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 20),
+                  ),
+                ),
+            ]),
+      title: Row(children: [
+        Expanded(child: Text(widget.file.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15))),
+        if (incomplete) ...[
+          const SizedBox(width: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(color: Colors.red.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(6)),
+            child: const Text('INCOMPLETE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Colors.red)),
+          ),
+        ],
+      ]),
       subtitle: Text(
-        '${SizeFormatter.format(widget.file.size)}  •  ${DateFormat('MMM d, yyyy HH:mm').format(widget.file.uploadedAt)}${widget.file.isChunked ? '  •  Chunked' : ''}',
-        style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
+        incomplete
+            ? 'Incomplete upload • tap retry in uploads or delete'
+            : '${SizeFormatter.format(widget.file.size)}  •  ${DateFormat('MMM d, yyyy HH:mm').format(widget.file.uploadedAt)}${widget.file.isChunked ? '  •  Chunked' : ''}',
+        style: TextStyle(fontSize: 12, color: incomplete ? Colors.red : Theme.of(context).colorScheme.onSurfaceVariant),
       ),
       onTap: widget.onTap,
       onLongPress: widget.onLongPress,
@@ -691,32 +729,56 @@ class _FileGridTileState extends ConsumerState<_FileGridTile> {
 
   @override
   Widget build(BuildContext context) {
+    final incomplete = widget.file.isIncomplete;
     return InkWell(
       borderRadius: BorderRadius.circular(12),
-      onTap: widget.onTap,
+      onTap: () {
+        if (incomplete) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('This file is incomplete — upload was interrupted. Delete or re-upload.')));
+          return;
+        }
+        widget.onTap();
+      },
       onLongPress: widget.onLongPress,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: widget.selected
-              ? Theme.of(context).colorScheme.surfaceContainerHighest
-              : Theme.of(context).colorScheme.surfaceContainerLow,
+          color: incomplete
+              ? Colors.red.withValues(alpha: 0.06)
+              : widget.selected
+                  ? Theme.of(context).colorScheme.surfaceContainerHighest
+                  : Theme.of(context).colorScheme.surfaceContainerLow,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: widget.selected
-                ? Theme.of(context).colorScheme.onSurface
-                : Theme.of(context).colorScheme.outline.withValues(alpha: 0.45),
-            width: widget.selected ? 2 : 1,
+            color: incomplete
+                ? Colors.red.withValues(alpha: 0.4)
+                : widget.selected
+                    ? Theme.of(context).colorScheme.onSurface
+                    : Theme.of(context).colorScheme.outline.withValues(alpha: 0.45),
+            width: widget.selected || incomplete ? 2 : 1,
           ),
         ),
         child: Stack(children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(8, 12, 8, 7),
             child: Column(children: [
-              Expanded(child: Center(child: _FileVisual(file: widget.file, thumbnail: thumbnail, size: 72))),
+              Expanded(
+                child: Center(
+                  child: Stack(children: [
+                    _FileVisual(file: widget.file, thumbnail: thumbnail, size: 72),
+                    if (incomplete)
+                      Positioned.fill(
+                        child: Container(
+                          decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.48), borderRadius: BorderRadius.circular(8)),
+                          child: const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 28),
+                        ),
+                      ),
+                  ]),
+                ),
+              ),
               const SizedBox(height: 7),
               Text(widget.file.name, maxLines: 2, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, height: 1.15)),
               const SizedBox(height: 3),
-              Text(SizeFormatter.format(widget.file.size), style: Theme.of(context).textTheme.labelSmall),
+              Text(incomplete ? 'Incomplete' : SizeFormatter.format(widget.file.size), style: Theme.of(context).textTheme.labelSmall?.copyWith(color: incomplete ? Colors.red : null)),
             ]),
           ),
           if (widget.selectionMode)
@@ -728,17 +790,10 @@ class _FileGridTileState extends ConsumerState<_FileGridTile> {
                 height: 22,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: widget.selected
-                      ? Theme.of(context).colorScheme.onSurface
-                      : Theme.of(context).colorScheme.surfaceContainerHighest,
-                  border: Border.all(
-                    color: Theme.of(context).colorScheme.outline,
-                    width: 1.5,
-                  ),
+                  color: widget.selected ? Theme.of(context).colorScheme.onSurface : Theme.of(context).colorScheme.surfaceContainerHighest,
+                  border: Border.all(color: Theme.of(context).colorScheme.outline, width: 1.5),
                 ),
-                child: widget.selected
-                    ? Icon(Icons.check, size: 14, color: Theme.of(context).colorScheme.surface)
-                    : null,
+                child: widget.selected ? Icon(Icons.check, size: 14, color: Theme.of(context).colorScheme.surface) : null,
               ),
             )
           else

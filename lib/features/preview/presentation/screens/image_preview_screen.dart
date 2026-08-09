@@ -82,34 +82,33 @@ class _ImagePreviewScreenState extends ConsumerState<ImagePreviewScreen> {
   }
 
   Widget _buildImageBody(DriveFile file) {
-    final localPath = _downloadedPath ?? file.localPath;
-    if (localPath == null ||
-        localPath.isEmpty ||
-        !File(localPath).existsSync()) {
+    if (file.isIncomplete) {
       return Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(Icons.image_not_supported_rounded,
-              color: Colors.white54, size: 64),
+          const Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 64),
           const SizedBox(height: 16),
-          Text(
-            file.name,
-            style: const TextStyle(color: Colors.white70),
-            textAlign: TextAlign.center,
-          ),
+          Text(file.name, style: const TextStyle(color: Colors.white70), textAlign: TextAlign.center),
           const SizedBox(height: 8),
-          const Text(
-            AppText.downloadImageFirst,
-            style: TextStyle(color: Colors.white38, fontSize: 13),
-          ),
+          const Text('This file is incomplete — upload was interrupted.\nDelete it or re-upload the original file.', style: TextStyle(color: Colors.white38, fontSize: 13), textAlign: TextAlign.center),
+        ],
+      );
+    }
+    final localPath = _downloadedPath ?? file.localPath;
+    if (localPath == null || localPath.isEmpty || !File(localPath).existsSync()) {
+      return Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.image_not_supported_rounded, color: Colors.white54, size: 64),
+          const SizedBox(height: 16),
+          Text(file.name, style: const TextStyle(color: Colors.white70), textAlign: TextAlign.center),
+          const SizedBox(height: 8),
+          const Text(AppText.downloadImageFirst, style: TextStyle(color: Colors.white38, fontSize: 13)),
           const SizedBox(height: 24),
           ElevatedButton.icon(
             onPressed: _isDownloading ? null : () => _download(file),
-            icon: Icon(_isDownloading
-                ? Icons.downloading_rounded
-                : Icons.download_rounded),
-            label:
-                Text(_isDownloading ? AppText.downloading : AppText.download),
+            icon: Icon(_isDownloading ? Icons.downloading_rounded : Icons.download_rounded),
+            label: Text(_isDownloading ? AppText.downloading : AppText.download),
           ),
         ],
       );

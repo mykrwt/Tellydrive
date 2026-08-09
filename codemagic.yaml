@@ -2,12 +2,13 @@ workflows:
   android-build:
     name: Android APK Build
     max_build_duration: 60
-    # Individual free plan minutes apply to macOS M2 builds.
     instance_type: mac_mini_m2
 
     environment:
       flutter: stable
       java: 17
+      groups:
+        - tellybase_secrets
 
     cache:
       cache_paths:
@@ -20,9 +21,32 @@ workflows:
         script: |
           flutter --version
           java -version
+
       - name: Get Flutter dependencies
         script: |
           flutter pub get
+
+      - name: Create Android secrets.properties
+        script: |
+          set -eu
+
+          test -n "${TELEGRAM_API_ID:-}" || {
+            echo "ERROR: TELEGRAM_API_ID is missing"
+            exit 1
+          }
+
+          test -n "${TELEGRAM_API_HASH:-}" || {
+            echo "ERROR: TELEGRAM_API_HASH is missing"
+            exit 1
+          }
+
+          cat > android/secrets.properties <<EOF
+          TELEGRAM_API_ID=${TELEGRAM_API_ID}
+          TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
+          EOF
+
+          echo "secrets.properties created successfully."
+
       - name: Build APK
         script: |
           flutter build apk --release

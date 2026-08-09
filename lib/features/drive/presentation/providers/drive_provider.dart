@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert' as dart_convert;
 import 'dart:io';
 
@@ -360,6 +361,11 @@ class UploadTask {
   final String? error;
   final UploadStatus status;
 
+  /// 'manual' for user-initiated uploads, 'backup' for Auto Backup uploads.
+  /// Backup uploads respect the backup Wi-Fi/notification constraints rather
+  /// than the generic upload Wi-Fi toggle.
+  final String source;
+
   const UploadTask({
     required this.id,
     required this.localPath,
@@ -370,6 +376,7 @@ class UploadTask {
     this.hasError = false,
     this.error,
     this.status = UploadStatus.pending,
+    this.source = 'manual',
   });
 
   UploadTask copyWith({
@@ -404,6 +411,7 @@ class UploadTask {
       hasError: nextError,
       error: error ?? this.error,
       status: nextStatus,
+      source: source,
     );
   }
 
@@ -417,6 +425,7 @@ class UploadTask {
         'hasError': hasError,
         'error': error,
         'status': status.name,
+        'source': source,
       };
 
   factory UploadTask.fromJson(Map<String, dynamic> json) => UploadTask(
@@ -428,6 +437,7 @@ class UploadTask {
         isComplete: json['isComplete'] as bool? ?? false,
         hasError: json['hasError'] as bool? ?? false,
         error: json['error'] as String?,
+        source: json['source'] as String? ?? 'manual',
         status: UploadStatus.values.firstWhere(
           (e) => e.name == (json['status'] as String? ?? 'pending'),
           orElse: () => UploadStatus.pending,
@@ -454,7 +464,11 @@ class UploadNotifier extends StateNotifier<UploadState> {
   Future<void> _persist() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final pending = state.tasks.where((t) => !t.isComplete).toList();
+      // Only manual uploads are worth restoring across restarts — backup
+      // uploads are re-discovered by the monitor's next scan.
+      final pending = state.tasks
+          .where((t) => !t.isComplete && t.source == 'manual')
+          .toList();
       final json = pending.map((t) => t.toJson()).toList();
       await prefs.setString(_persistKey, dart_convert.jsonEncode(json));
     } catch (_) {}
@@ -479,10 +493,23 @@ class UploadNotifier extends StateNotifier<UploadState> {
     } catch (_) {}
   }
 
-  Future<void> _uploadFileInternal(String taskId, String localPath, String fileName, String folderId) async {
-    final prefs = await SharedPreferences.getInstance();
-    if (prefs.getBool('uploads_wifi_only') == true && !await NativeTelegramChannel.isOnWifi()) {
-      throw StateError('Wi-Fi-only uploads are enabled. Connect to Wi-Fi and retry.');
+  /// The generic Wi-Fi gate only applies to user-initiated uploads. Backup
+  /// uploads enforce their own (richer) constraints in the backup monitor, so
+  /// they bypass it here.
+  Future<void> _uploadFileInternal(
+    String taskId,
+    String localPath,
+    String fileName,
+    String folderId, {
+    String source = 'manual',
+  }) async {
+    if (source == 'manual') {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool('uploads_wifi_only') == true &&
+          !await NativeTelegramChannel.isOnWifi()) {
+        throw StateError(
+            'Wi-Fi-only uploads are enabled. Connect to Wi-Fi and retry.');
+      }
     }
     _updateTask(taskId, progress: 0.01, status: UploadStatus.uploading);
     await _repository.uploadFile(
@@ -500,13 +527,14 @@ class UploadNotifier extends StateNotifier<UploadState> {
     required String fileName,
     required String folderId,
   }) async {
-    final taskId = 'task_${DateTime.now().millisecondsSinceEpoch}_${fileName.hashCode}';
+    final taskId = 'task_${DateTime.now().microsecondsSinceEpoch}_${fileName.hashCode}';
     final task = UploadTask(
       id: taskId,
       localPath: localPath,
       fileName: fileName,
       folderId: folderId,
       status: UploadStatus.pending,
+      source: 'manual',
     );
     state = UploadState(tasks: [...state.tasks, task]);
     await _persist();
@@ -517,9 +545,102 @@ class UploadNotifier extends StateNotifier<UploadState> {
       await _persist();
       await Future<void>.delayed(const Duration(milliseconds: 600));
       await _ref.read(driveProvider.notifier).loadFiles(folderId: folderId);
+      await _maybeNotifyTransfer('Upload complete', fileName);
     } catch (e) {
       _updateTask(taskId, hasError: true, error: e.toString(), status: UploadStatus.failed);
       await _persist();
+      await _maybeNotifyTransfer('Upload failed', '$fileName — ${e.toString()}',
+          isError: true);
+    }
+  }
+
+  Future<void> _maybeNotifyTransfer(String title, String body,
+      {bool isError = false}) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool('transfer_notifications') ?? true) {
+        await NativeTelegramChannel.showNotification(
+          title: title,
+          body: body,
+          id: (title.hashCode ^ body.hashCode) & 0x7fffffff,
+          channelId: 'teledrive_transfers',
+          channelName: 'Transfers',
+        );
+      }
+    } catch (_) {}
+  }
+
+  /// Upload triggered by the Auto Backup monitor. Reuses the exact same
+  /// chunking / progress / dedupe pipeline as a manual upload, but is tagged
+  /// `source: 'backup'` so it (a) bypasses the generic Wi-Fi toggle (the
+  /// monitor has already enforced the backup constraints), (b) is not
+  /// persisted across restarts, and (c) optionally posts an Android
+  /// notification on completion / failure.
+  Future<void> uploadViaBackup({
+    required String localPath,
+    required String fileName,
+    required String folderId,
+    required bool notifications,
+  }) async {
+    final taskId = 'backup_${DateTime.now().microsecondsSinceEpoch}_${fileName.hashCode}';
+    final task = UploadTask(
+      id: taskId,
+      localPath: localPath,
+      fileName: fileName,
+      folderId: folderId,
+      status: UploadStatus.pending,
+      source: 'backup',
+    );
+    state = UploadState(tasks: [...state.tasks, task]);
+    try {
+      await _uploadFileInternal(taskId, localPath, fileName, folderId,
+          source: 'backup');
+      _updateTask(taskId,
+          progress: 1.0,
+          isComplete: true,
+          hasError: false,
+          status: UploadStatus.completed);
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      await _ref.read(driveProvider.notifier).loadFiles(folderId: folderId);
+      if (notifications) {
+        await NativeTelegramChannel.showNotification(
+          title: 'Auto Backup complete',
+          body: fileName,
+          id: taskId.hashCode & 0x7fffffff,
+          channelId: 'teledrive_backup',
+          channelName: 'Auto Backup',
+        );
+      }
+    } catch (e) {
+      _updateTask(taskId,
+          hasError: true, error: e.toString(), status: UploadStatus.failed);
+      if (notifications) {
+        await NativeTelegramChannel.showNotification(
+          title: 'Auto Backup failed',
+          body: '$fileName — ${e.toString()}',
+          id: taskId.hashCode & 0x7fffffff,
+          channelId: 'teledrive_backup',
+          channelName: 'Auto Backup',
+        );
+      }
+      rethrow;
+    }
+    // Completed backup tasks are already hidden from the upload strip (which
+    // filters on !isComplete). Drop them asynchronously so they don't pile up
+    // in memory without blocking the upload itself.
+    Timer(const Duration(seconds: 4), () {
+      if (!mounted) return;
+      _removeTask(taskId);
+    });
+  }
+
+  /// Removes finished backup tasks so the task list stays bounded across many
+  /// automatic backups. Called at the start of each backup scan pass.
+  void pruneBackupTasks() {
+    final kept = state.tasks.where((t) =>
+        t.source != 'backup' || !(t.isComplete || t.status == UploadStatus.failed)).toList();
+    if (kept.length != state.tasks.length) {
+      state = UploadState(tasks: kept);
     }
   }
 
@@ -543,7 +664,7 @@ class UploadNotifier extends StateNotifier<UploadState> {
     _updateTask(taskId, progress: retryTask.progress, hasError: false, error: '', status: UploadStatus.pending);
     await _persist();
     try {
-      await _uploadFileInternal(taskId, retryTask.localPath, retryTask.fileName, retryTask.folderId);
+      await _uploadFileInternal(taskId, retryTask.localPath, retryTask.fileName, retryTask.folderId, source: retryTask.source);
       _updateTask(taskId, progress: 1, isComplete: true, hasError: false, status: UploadStatus.completed);
       await _persist();
       await Future<void>.delayed(const Duration(milliseconds: 600));
@@ -564,6 +685,10 @@ class UploadNotifier extends StateNotifier<UploadState> {
     state = UploadState(tasks: updated);
     // Persist asynchronously without blocking UI
     _persist();
+  }
+
+  void _removeTask(String taskId) {
+    state = UploadState(tasks: state.tasks.where((t) => t.id != taskId).toList());
   }
 
   void clearCompleted() {

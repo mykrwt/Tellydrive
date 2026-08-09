@@ -51,4 +51,42 @@ class StorageKeys {
   static const String viewMode = 'app_view_mode';
   static const String downloadPath = 'app_download_path';
   static const String cacheSize = 'app_cache_size';
+
+  // Onboarding / permissions
+  static const String onboardingCompleted = 'onboarding_completed';
+}
+
+/// SharedPreferences keys for user-controlled settings that are read directly
+/// by feature code (gallery, files, backup monitor). Centralised here so the
+/// keys never drift between the writer (Settings) and the readers.
+class PrefKeys {
+  PrefKeys._();
+
+  // Transfer / backup behaviour
+  static const String uploadsWifiOnly = 'uploads_wifi_only';
+  static const String transferNotifications = 'transfer_notifications';
+
+  // Gallery
+  static const String galleryAutoplay = 'gallery_autoplay';
+  static const String galleryColumns = 'gallery_columns';
+
+  // Files
+  static const String confirmBeforeDelete = 'confirm_before_delete';
+
+  // Privacy / security
+  static const String appLockEnabled = 'app_lock_enabled';
+
+  // Gallery gesture
+  static const String galleryPinchZoom = 'gallery_pinch_zoom';
+
+  // Auto backup rules + status (mirror of AutoBackupProvider, kept in sync)
+  static const String autoBackupEnabled = 'auto_backup_enabled';
+  static const String autoBackupRules = 'auto_backup_rules_v2';
+  static const String autoBackupWifiOnly = 'auto_backup_wifi_only';
+  static const String autoBackupMobileData = 'auto_backup_mobile_data';
+  static const String autoBackupChargingOnly = 'auto_backup_charging_only';
+  static const String autoBackupFrequency = 'auto_backup_frequency';
+  static const String autoBackupNotifications = 'auto_backup_notifications';
+  static const String autoBackupLastAt = 'auto_backup_last_at';
+  static const String autoBackupSeen = 'auto_backup_seen_fingerprints';
 }

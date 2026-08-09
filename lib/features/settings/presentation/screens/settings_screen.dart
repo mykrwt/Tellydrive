@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -7,6 +8,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/routing/app_router.dart';
+import '../../../../services/files/file_utils.dart';
+import '../../../../services/platform/native_telegram_channel.dart';
+import '../../../../services/security/app_lock_service.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../drive/presentation/providers/drive_provider.dart';
 import '../providers/auto_backup_provider.dart';
@@ -22,10 +26,19 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-  bool _wifiOnly = false;
+  // Local cached setting values, loaded once from SharedPreferences.
+  bool _uploadsWifiOnly = false;
   bool _galleryAutoplay = true;
-  bool _notifications = true;
+  bool _galleryPinchZoom = true;
+  int _galleryColumns = 3;
+  bool _transferNotifications = true;
+  bool _confirmBeforeDelete = true;
+  bool _appLock = false;
   bool _loaded = false;
+
+  // Storage panel state.
+  int? _cacheBytes;
+  bool _clearing = false;
 
   @override
   void initState() {
@@ -37,16 +50,69 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
     setState(() {
-      _wifiOnly = prefs.getBool('uploads_wifi_only') ?? false;
-      _galleryAutoplay = prefs.getBool('gallery_autoplay') ?? true;
-      _notifications = prefs.getBool('transfer_notifications') ?? true;
+      _uploadsWifiOnly = prefs.getBool(PrefKeys.uploadsWifiOnly) ?? false;
+      _galleryAutoplay = prefs.getBool(PrefKeys.galleryAutoplay) ?? true;
+      _galleryPinchZoom = prefs.getBool(PrefKeys.galleryPinchZoom) ?? true;
+      _galleryColumns = prefs.getInt(PrefKeys.galleryColumns) ?? 3;
+      _transferNotifications =
+          prefs.getBool(PrefKeys.transferNotifications) ?? true;
+      _confirmBeforeDelete = prefs.getBool(PrefKeys.confirmBeforeDelete) ?? true;
+      _appLock = prefs.getBool(PrefKeys.appLockEnabled) ?? false;
       _loaded = true;
     });
+    unawaited(_refreshCacheSize());
   }
 
-  Future<void> _saveBool(String key, bool value) async {
+  Future<void> _refreshCacheSize() async {
+    try {
+      final bytes = await NativeTelegramChannel.getCacheSizeBytes();
+      if (mounted) setState(() => _cacheBytes = bytes);
+    } catch (_) {
+      if (mounted) setState(() => _cacheBytes = 0);
+    }
+  }
+
+  Future<void> _save(String key, bool value) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(key, value);
+  }
+
+  Future<void> _clearCache() async {
+    setState(() => _clearing = true);
+    try {
+      await NativeTelegramChannel.optimizeStorage();
+      await _refreshCacheSize();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Cache cleared')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(e.toString()), backgroundColor: Colors.red));
+      }
+    } finally {
+      if (mounted) setState(() => _clearing = false);
+    }
+  }
+
+  Future<void> _toggleAppLock(bool value) async {
+    if (value) {
+      final available = await AppLockService.instance.isAvailable();
+      if (!available) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text(
+                  'Biometric or screen lock isn’t set up on this device.')));
+        }
+        return;
+      }
+      final ok = await AppLockService.instance
+          .authenticate(reason: 'Confirm to enable app lock');
+      if (!ok) return;
+    }
+    await AppLockService.instance.setEnabled(value);
+    if (mounted) setState(() => _appLock = value);
   }
 
   @override
@@ -54,125 +120,221 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final profile = ref.watch(userProfileProvider);
     final ftp = ref.watch(ftpServerProvider);
     final theme = ref.watch(themeModeProvider);
-    final drive = ref.watch(driveProvider);
+    final backup = ref.watch(autoBackupProvider);
+
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: !widget.embedded,
-        title: const Text('Settings', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700)),
+        title: const Text('Settings',
+            style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700)),
       ),
       body: !_loaded
           ? const Center(child: CircularProgressIndicator())
           : ListView(
-              padding: const EdgeInsets.fromLTRB(12, 4, 12, 110),
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 110),
               children: [
+                // ── Account ──────────────────────────────────────────────
                 _Section(
                   title: 'Account',
                   children: [
                     profile.when(
-                      data: (user) => ListTile(
-                        leading: _Avatar(path: user['photoPath']?.toString()),
-                        title: Text('${user['firstName'] ?? ''} ${user['lastName'] ?? ''}'.trim().isEmpty ? 'Telegram user' : '${user['firstName'] ?? ''} ${user['lastName'] ?? ''}'.trim()),
-                        subtitle: Text(_phone(user['phoneNumber']?.toString())),
-                      ),
-                      loading: () => const ListTile(leading: CircularProgressIndicator(), title: Text('Loading Telegram account…')),
-                      error: (_, __) => const ListTile(leading: Icon(Icons.person_outline), title: Text('Telegram account'), subtitle: Text('Unable to read profile')),
+                      data: (user) {
+                        final name =
+                            '${user['firstName'] ?? ''} ${user['lastName'] ?? ''}'
+                                .trim();
+                        return ListTile(
+                          leading: _Avatar(path: user['photoPath']?.toString()),
+                          title: Text(name.isEmpty ? 'Telegram user' : name),
+                          subtitle: Text(_phone(user['phoneNumber']?.toString())),
+                        );
+                      },
+                      loading: () => const ListTile(
+                          leading: CircularProgressIndicator(),
+                          title: Text('Loading Telegram account…')),
+                      error: (_, __) => const ListTile(
+                          leading: Icon(Icons.person_outline),
+                          title: Text('Telegram account'),
+                          subtitle: Text('Unable to read profile')),
                     ),
                     ListTile(
                       leading: const Icon(Icons.logout, color: Colors.red),
-                      title: const Text('Log out', style: TextStyle(color: Colors.red)),
-                      subtitle: const Text('End this Telegram session on this device'),
+                      title: const Text('Log out',
+                          style: TextStyle(color: Colors.red)),
+                      subtitle: const Text(
+                          'End this Telegram session on this device'),
                       onTap: _logout,
                     ),
                   ],
                 ),
+
+                // ── Backup ──────────────────────────────────────────────
                 _Section(
-                  title: 'Upload/download settings',
+                  title: 'Backup',
+                  description: 'Automatically back up phone folders to Telegram.',
+                  children: [
+                    SwitchListTile(
+                      secondary: const Icon(Icons.backup_outlined),
+                      title: const Text('Auto Backup'),
+                      subtitle: Text(backup.enabled
+                          ? 'On • ${backup.rules.where((r) => r.enabled).length} active '
+                              '${backup.rules.where((r) => r.enabled).length == 1 ? 'rule' : 'rules'}'
+                          : 'Off'),
+                      value: backup.enabled,
+                      onChanged: (v) =>
+                          ref.read(autoBackupProvider.notifier).setEnabled(v),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.rule_folder_outlined),
+                      title: const Text('Backup rules'),
+                      subtitle: Text(backup.rules.isEmpty
+                          ? 'Folder → Telegram destination'
+                          : '${backup.rules.length} '
+                              '${backup.rules.length == 1 ? 'rule' : 'rules'}'),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: () => context.push(AppRoutes.autoBackup),
+                    ),
+                  ],
+                ),
+
+                // ── Downloads & Storage ─────────────────────────────────
+                _Section(
+                  title: 'Downloads & Storage',
                   children: [
                     SwitchListTile(
                       secondary: const Icon(Icons.wifi),
                       title: const Text('Upload on Wi-Fi only'),
-                      subtitle: const Text('Applies to uploads started in the app'),
-                      value: _wifiOnly,
+                      subtitle: const Text(
+                          'Applies to uploads started manually in the app'),
+                      value: _uploadsWifiOnly,
                       onChanged: (value) {
-                        setState(() => _wifiOnly = value);
-                        _saveBool('uploads_wifi_only', value);
+                        setState(() => _uploadsWifiOnly = value);
+                        _save(PrefKeys.uploadsWifiOnly, value);
                       },
                     ),
-                    const ListTile(
-                      leading: Icon(Icons.layers_outlined),
-                      title: Text('Large-file uploads'),
-                      subtitle: Text('Direct up to 2 GB; larger files resume in ordered Telegram chunks'),
+                    const Divider(height: 1, indent: 56),
+                    ListTile(
+                      leading: const Icon(Icons.sd_storage_outlined),
+                      title: const Text('Downloads'),
+                      subtitle: const Text('Saved to Downloads/TeleDrive'),
                     ),
-                    const ListTile(
-                      leading: Icon(Icons.download_outlined),
-                      title: Text('Download location'),
-                      subtitle: Text('Public Downloads/TeleDrive'),
+                    const Divider(height: 1, indent: 56),
+                    ListTile(
+                      leading: _clearing
+                          ? const SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.cleaning_services_outlined),
+                      title: const Text('Clear cache'),
+                      subtitle: Text(_cacheBytes == null
+                          ? 'Calculating…'
+                          : 'Telegram cache • ${SizeFormatter.format(_cacheBytes!)}'),
+                      onTap: _clearing ? null : _clearCache,
                     ),
                   ],
                 ),
+
+                // ── Gallery ─────────────────────────────────────────────
                 _Section(
-                  title: 'Gallery settings',
+                  title: 'Gallery',
                   children: [
                     SwitchListTile(
                       secondary: const Icon(Icons.play_circle_outline),
                       title: const Text('Autoplay videos'),
-                      subtitle: const Text('Play when opened in the full-screen viewer'),
+                      subtitle: const Text(
+                          'Play automatically in the full-screen viewer'),
                       value: _galleryAutoplay,
                       onChanged: (value) {
                         setState(() => _galleryAutoplay = value);
-                        _saveBool('gallery_autoplay', value);
+                        _save(PrefKeys.galleryAutoplay, value);
                       },
                     ),
-                    const ListTile(
-                      leading: Icon(Icons.grid_3x3),
-                      title: Text('Gallery grid'),
-                      subtitle: Text('Pinch to zoom • choose grid size'),
+                    const Divider(height: 1, indent: 56),
+                    ListTile(
+                      leading: const Icon(Icons.grid_view_rounded),
+                      title: const Text('Default grid size'),
+                      subtitle: Text('$_galleryColumns columns'),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: _chooseGridSize,
+                    ),
+                    const Divider(height: 1, indent: 56),
+                    SwitchListTile(
+                      secondary: const Icon(Icons.zoom_in_rounded),
+                      title: const Text('Pinch to zoom'),
+                      subtitle:
+                          const Text('Pinch the gallery to change grid size'),
+                      value: _galleryPinchZoom,
+                      onChanged: (value) {
+                        setState(() => _galleryPinchZoom = value);
+                        _save(PrefKeys.galleryPinchZoom, value);
+                      },
                     ),
                   ],
                 ),
+
+                // ── Files ───────────────────────────────────────────────
                 _Section(
-                  title: 'File manager settings',
+                  title: 'Files',
                   children: [
                     ListTile(
                       leading: const Icon(Icons.view_module_outlined),
                       title: const Text('Default view'),
-                      subtitle: Text(ref.watch(defaultViewModeProvider) == 'grid' ? 'Grid' : 'List'),
+                      subtitle:
+                          Text(ref.watch(defaultViewModeProvider) == 'grid'
+                              ? 'Grid'
+                              : 'List'),
+                      trailing: const Icon(Icons.chevron_right_rounded),
                       onTap: _chooseFileView,
                     ),
-                    const ListTile(
-                      leading: Icon(Icons.visibility_off_outlined),
-                      title: Text('Internal chunk files'),
-                      subtitle: Text('Always hidden from Gallery, Files, and FTP'),
+                    const Divider(height: 1, indent: 56),
+                    SwitchListTile(
+                      secondary: const Icon(Icons.delete_outline),
+                      title: const Text('Confirm before deleting'),
+                      subtitle:
+                          const Text('Ask before removing files or folders'),
+                      value: _confirmBeforeDelete,
+                      onChanged: (value) {
+                        setState(() => _confirmBeforeDelete = value);
+                        _save(PrefKeys.confirmBeforeDelete, value);
+                      },
                     ),
                   ],
                 ),
-                _Section(
-                  title: 'Appearance',
-                  children: [
-                    ListTile(
-                      leading: const Icon(Icons.palette_outlined),
-                      title: const Text('Theme'),
-                      subtitle: Text(_themeName(theme)),
-                      onTap: _chooseTheme,
-                    ),
-                  ],
-                ),
+
+                // ── Notifications ───────────────────────────────────────
                 _Section(
                   title: 'Notifications',
                   children: [
                     SwitchListTile(
                       secondary: const Icon(Icons.notifications_outlined),
                       title: const Text('Transfer notifications'),
-                      subtitle: const Text('Upload, download, and error status'),
-                      value: _notifications,
+                      subtitle: const Text(
+                          'Upload, download, and error status'),
+                      value: _transferNotifications,
                       onChanged: (value) {
-                        setState(() => _notifications = value);
-                        _saveBool('transfer_notifications', value);
+                        setState(() => _transferNotifications = value);
+                        _save(PrefKeys.transferNotifications, value);
                       },
                     ),
                   ],
                 ),
-                _AutoBackupSection(drive: drive),
+
+                // ── Privacy & Security ──────────────────────────────────
+                _Section(
+                  title: 'Privacy & Security',
+                  children: [
+                    SwitchListTile(
+                      secondary: const Icon(Icons.lock_outline),
+                      title: const Text('App lock'),
+                      subtitle: const Text(
+                          'Require biometrics to open TeleDrive'),
+                      value: _appLock,
+                      onChanged: _toggleAppLock,
+                    ),
+                  ],
+                ),
+
+                // ── Local access (FTP) ──────────────────────────────────
                 _FtpSection(
                   state: ftp,
                   onConfigure: _configureFtp,
@@ -180,17 +342,35 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       ? ref.read(ftpServerProvider.notifier).stop
                       : ref.read(ftpServerProvider.notifier).start,
                 ),
+
+                // ── Appearance ──────────────────────────────────────────
+                _Section(
+                  title: 'Appearance',
+                  children: [
+                    ListTile(
+                      leading: const Icon(Icons.palette_outlined),
+                      title: const Text('Theme'),
+                      subtitle: Text(_themeName(theme)),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: _chooseTheme,
+                    ),
+                  ],
+                ),
+
+                // ── About ───────────────────────────────────────────────
                 const _Section(
                   title: 'About',
                   children: [
                     ListTile(
                       leading: Icon(Icons.info_outline),
                       title: Text('TeleDrive'),
-                      subtitle: Text('Version ${AppConstants.appVersion}\nTelegram-backed gallery and file manager'),
+                      subtitle: Text(
+                          'Version ${AppConstants.appVersion}\nTelegram-backed gallery and file manager'),
                       isThreeLine: true,
                     ),
                     ListTile(
-                      leading: Icon(Icons.favorite_rounded, color: Colors.red),
+                      leading:
+                          Icon(Icons.favorite_rounded, color: Colors.red),
                       title: Text('Made with ❤️ by @myk.rwt'),
                       subtitle: Text('Crafted with care for a premium experience'),
                     ),
@@ -216,8 +396,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final choice = await showModalBottomSheet<ThemeMode>(
       context: context,
       showDragHandle: true,
-      builder: (context) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
-        const ListTile(title: Text('Appearance', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700))),
+      builder: (context) => SafeArea(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 12),
+          child: Text('Appearance',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+        ),
+        const Divider(height: 1),
         for (final mode in ThemeMode.values)
           RadioListTile<ThemeMode>(
             value: mode,
@@ -232,15 +418,56 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     await SettingsService.saveTheme(choice);
   }
 
+  Future<void> _chooseGridSize() async {
+    final choice = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 12),
+          child: Text('Default grid size',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+        ),
+        const Divider(height: 1),
+        for (var c = 2; c <= 8; c++)
+          RadioListTile<int>(
+            value: c,
+            groupValue: _galleryColumns,
+            title: Text('$c columns'),
+            onChanged: (value) => Navigator.pop(context, value),
+          ),
+      ])),
+    );
+    if (choice == null) return;
+    setState(() => _galleryColumns = choice);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(PrefKeys.galleryColumns, choice);
+  }
+
   Future<void> _chooseFileView() async {
     final current = ref.read(defaultViewModeProvider);
     final choice = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
-      builder: (context) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
-        const ListTile(title: Text('Default file view', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700))),
-        RadioListTile(value: 'list', groupValue: current, title: const Text('List'), onChanged: (value) => Navigator.pop(context, value)),
-        RadioListTile(value: 'grid', groupValue: current, title: const Text('Grid'), onChanged: (value) => Navigator.pop(context, value)),
+      builder: (context) => SafeArea(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 12),
+          child: Text('Default file view',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+        ),
+        const Divider(height: 1),
+        RadioListTile(
+            value: 'list',
+            groupValue: current,
+            title: const Text('List'),
+            onChanged: (value) => Navigator.pop(context, value)),
+        RadioListTile(
+            value: 'grid',
+            groupValue: current,
+            title: const Text('Grid'),
+            onChanged: (value) => Navigator.pop(context, value)),
       ])),
     );
     if (choice == null) return;
@@ -261,30 +488,46 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('FTP server configuration'),
-        content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
           TextField(controller: user, decoration: const InputDecoration(labelText: 'Username')),
           const SizedBox(height: 10),
-          TextField(controller: password, obscureText: true, decoration: const InputDecoration(labelText: 'Password')),
+          TextField(
+              controller: password,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Password')),
           const SizedBox(height: 10),
-          TextField(controller: port, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Port')),
+          TextField(
+              controller: port,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Port')),
           const SizedBox(height: 14),
-          const Text('FTP is intended for a trusted local network. The password is stored in encrypted device storage.', style: TextStyle(fontSize: 12)),
+          const Text(
+              'FTP is intended for a trusted local network. The password is stored in encrypted device storage.',
+              style: TextStyle(fontSize: 12)),
         ])),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Save')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Save')),
         ],
       ),
     );
     if (save == true) {
       try {
         await ref.read(ftpServerProvider.notifier).configure(
-          username: user.text,
-          password: password.text,
-          port: int.tryParse(port.text) ?? 0,
-        );
+              username: user.text,
+              password: password.text,
+              port: int.tryParse(port.text) ?? 0,
+            );
       } catch (error) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString()), backgroundColor: Colors.red));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(error.toString()), backgroundColor: Colors.red));
+        }
       }
     }
     user.dispose();
@@ -299,116 +542,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         title: const Text('Log out?'),
         content: const Text('Telegram cloud files are not deleted.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Log out')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Log out')),
         ],
       ),
     );
     if (yes != true) return;
     await ref.read(ftpServerProvider.notifier).stop();
+    await ref.read(autoBackupProvider.notifier).setEnabled(false);
     await ref.read(authProvider.notifier).logout();
     if (mounted) context.go(AppRoutes.welcome);
-  }
-}
-
-class _AutoBackupSection extends ConsumerWidget {
-  const _AutoBackupSection({required this.drive});
-  final DriveState drive;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final state = ref.watch(autoBackupProvider);
-    final notifier = ref.read(autoBackupProvider.notifier);
-    final selectedCount = state.selectedFolderIds.length;
-    return _Section(
-      title: 'Automatic backup',
-      children: [
-        SwitchListTile(
-          secondary: const Icon(Icons.backup_outlined),
-          title: const Text('Auto Backup'),
-          subtitle: Text(state.enabled ? 'Enabled • backs up selected folders' : 'Disabled'),
-          value: state.enabled,
-          onChanged: (v) => notifier.setEnabled(v),
-        ),
-        ListTile(
-          leading: const Icon(Icons.folder_copy_outlined),
-          title: const Text('Select folders to back up'),
-          subtitle: Text(selectedCount == 0 ? 'No folders selected' : '$selectedCount folder(s) selected'),
-          trailing: const Icon(Icons.chevron_right_rounded),
-          enabled: state.enabled,
-          onTap: state.enabled ? () => _chooseFolders(context, ref) : null,
-        ),
-        if (state.enabled && selectedCount > 0)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-            child: Text(
-              'Auto backup will keep the selected folders in sync in the background. You can change the selection anytime.',
-              style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
-            ),
-          ),
-      ],
-    );
-  }
-
-  Future<void> _chooseFolders(BuildContext context, WidgetRef ref) async {
-    final folders = ref.read(driveProvider).folders;
-    final current = Set<String>.from(ref.read(autoBackupProvider).selectedFolderIds);
-    final temp = Set<String>.from(current);
-    final confirmed = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => SafeArea(
-          child: Padding(
-            padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const ListTile(title: Text('Choose folders to back up automatically', style: TextStyle(fontWeight: FontWeight.w700))),
-                const Divider(height: 1),
-                Flexible(
-                  child: ListView(
-                    shrinkWrap: true,
-                    children: folders.map((f) {
-                      final selected = temp.contains(f.id);
-                      return CheckboxListTile(
-                        value: selected,
-                        title: Text(f.title),
-                        subtitle: Text(f.isSavedMessages ? 'Saved Messages' : 'Channel folder'),
-                        onChanged: (v) => setLocal(() {
-                          if (v == true) {
-                            temp.add(f.id);
-                          } else {
-                            temp.remove(f.id);
-                          }
-                        }),
-                      );
-                    }).toList(),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                  child: Row(
-                    children: [
-                      Expanded(child: OutlinedButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel'))),
-                      const SizedBox(width: 12),
-                      Expanded(child: FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save'))),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-    if (confirmed == true) {
-      await ref.read(autoBackupProvider.notifier).setFolders(temp);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(temp.isEmpty ? 'Auto backup: no folders selected' : 'Auto backup: ${temp.length} folder(s) will be backed up')));
-      }
-    }
   }
 }
 
@@ -421,36 +568,49 @@ class _FtpSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _Section(
-      title: 'FTP server',
+      title: 'Local access',
+      description: 'Share your Telegram storage over FTP on your local network.',
       children: [
         ListTile(
-          leading: Icon(state.running ? Icons.cloud_done_outlined : Icons.cloud_off_outlined),
-          title: const Text('Server status'),
-          subtitle: Text(state.running ? 'ftp://${state.host}:${state.port}' : 'Stopped'),
-          trailing: _StatusDot(label: state.running ? 'Running' : 'Stopped', color: state.running ? Colors.green : Colors.grey),
+          leading: Icon(state.running
+              ? Icons.cloud_done_outlined
+              : Icons.cloud_off_outlined),
+          title: const Text('FTP server'),
+          subtitle: Text(state.running
+              ? 'ftp://${state.host}:${state.port}'
+              : 'Stopped'),
+          trailing: _StatusDot(
+              label: state.running ? 'Running' : 'Stopped',
+              color: state.running ? Colors.green : Colors.grey),
         ),
         ListTile(
           leading: const Icon(Icons.badge_outlined),
           title: Text(state.username),
-          subtitle: Text('Port ${state.port} • Password ${state.password.isEmpty ? 'not configured' : 'configured'}'),
+          subtitle: Text(
+              'Port ${state.port} • Password ${state.password.isEmpty ? 'not configured' : 'configured'}'),
           trailing: const Icon(Icons.edit_outlined),
           enabled: !state.running && !state.loading,
           onTap: onConfigure,
         ),
         if (state.error != null)
-          Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 10), child: Text(state.error!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
+          Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+              child: Text(state.error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error))),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
           child: FilledButton.icon(
-            style: FilledButton.styleFrom(backgroundColor: state.running ? Colors.red : null, minimumSize: const Size.fromHeight(46)),
+            style: FilledButton.styleFrom(
+                backgroundColor: state.running ? Colors.red : null,
+                minimumSize: const Size.fromHeight(46)),
             onPressed: state.loading ? null : onToggle,
-            icon: state.loading ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2)) : Icon(state.running ? Icons.stop : Icons.play_arrow),
+            icon: state.loading
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : Icon(state.running ? Icons.stop : Icons.play_arrow),
             label: Text(state.running ? 'Stop server' : 'Start server'),
           ),
-        ),
-        const Padding(
-          padding: EdgeInsets.fromLTRB(16, 0, 16, 14),
-          child: Text('The FTP root shows the same Telegram folders and files as Files. Downloads are fetched on demand; no full local mirror is created.', style: TextStyle(fontSize: 12)),
         ),
       ],
     );
@@ -458,19 +618,33 @@ class _FtpSection extends StatelessWidget {
 }
 
 class _Section extends StatelessWidget {
-  const _Section({required this.title, required this.children});
+  const _Section({required this.title, required this.children, this.description});
   final String title;
+  final String? description;
   final List<Widget> children;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 18),
+      padding: const EdgeInsets.only(bottom: 22),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(12, 4, 12, 7),
-          child: Text(title.toUpperCase(), style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Theme.of(context).colorScheme.primary)),
+          padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
+          child: Text(title.toUpperCase(),
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.6,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant)),
         ),
+        if (description != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+            child: Text(description!,
+                style: Theme.of(context).textTheme.bodySmall),
+          )
+        else
+          const SizedBox(height: 4),
         Card(
           margin: EdgeInsets.zero,
           clipBehavior: Clip.antiAlias,
@@ -504,8 +678,11 @@ class _StatusDot extends StatelessWidget {
   final Color color;
   @override
   Widget build(BuildContext context) => Row(mainAxisSize: MainAxisSize.min, children: [
-    Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
-    const SizedBox(width: 6),
-    Text(label, style: const TextStyle(fontSize: 12)),
-  ]);
+        Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+        const SizedBox(width: 6),
+        Text(label, style: const TextStyle(fontSize: 12)),
+      ]);
 }

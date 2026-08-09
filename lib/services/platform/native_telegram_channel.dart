@@ -142,6 +142,26 @@ class NativeTelegramChannel {
     }
   }
 
+  /// True when the device is currently on AC/USB power. Used by Auto Backup's
+  /// "charging only" constraint.
+  static Future<bool> isCharging() async {
+    try {
+      return await _method.invokeMethod<bool>('isCharging') ?? false;
+    } on PlatformException catch (e) {
+      throw _mapError(e);
+    }
+  }
+
+  /// Approximate byte size of the TDLib/app cache, for Storage usage display.
+  static Future<int> getCacheSizeBytes() async {
+    try {
+      final value = await _method.invokeMethod<num>('getCacheSizeBytes');
+      return value?.toInt() ?? 0;
+    } on PlatformException catch (e) {
+      throw _mapError(e);
+    }
+  }
+
   /// Materialize an Android content URI so Dart can stream/split it.
   static Future<String> materializeFile(String uri) async {
     try {
@@ -239,6 +259,29 @@ class NativeTelegramChannel {
       await _method.invokeMethod('optimizeStorage');
     } on PlatformException catch (e) {
       throw _mapError(e);
+    }
+  }
+
+  /// Post an Android status notification (used for backup/transfer status).
+  /// Safe to call when the POST_NOTIFICATIONS permission hasn't been granted —
+  /// it silently no-ops on those devices.
+  static Future<void> showNotification({
+    required String title,
+    required String body,
+    int id = 1,
+    String channelId = 'teledrive_transfers',
+    String channelName = 'Transfers',
+  }) async {
+    try {
+      await _method.invokeMethod('showNotification', {
+        'title': title,
+        'body': body,
+        'id': id,
+        'channelId': channelId,
+        'channelName': channelName,
+      });
+    } on PlatformException catch (_) {
+      // Posting can fail if the permission isn't granted — never fatal.
     }
   }
 

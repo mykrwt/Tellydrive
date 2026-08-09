@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/routing/app_router.dart';
 import 'core/theme/app_theme.dart';
 import 'features/settings/presentation/providers/settings_provider.dart';
-import 'services/permissions/background_permission_service.dart';
 
 class TeleDriveApp extends ConsumerStatefulWidget {
   const TeleDriveApp({super.key});
@@ -27,10 +26,9 @@ class _TeleDriveAppState extends ConsumerState<TeleDriveApp> {
     if (mounted) {
       setState(() => _settingsLoaded = true);
     }
-    // Request background permissions on first launch after first frame.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) BackgroundPermissionService.requestIfNeeded(context);
-    });
+    // Required permissions (notifications, battery optimization) are now
+    // handled by the onboarding gate before the user enters the app, so no
+    // first-launch dialog is triggered here.
   }
 
   @override

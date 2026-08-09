@@ -2,7 +2,9 @@ import 'dart:io';
 
 import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/constants/app_constants.dart';
 import '../../features/drive/domain/entities/drive_file.dart';
 import '../../features/drive/domain/repositories/drive_repository.dart';
 import '../platform/native_telegram_channel.dart';
@@ -19,8 +21,9 @@ class FileActionService {
       throw StateError('Cannot download an incomplete file. Re-upload the original file to resume.');
     }
     final local = await repository.downloadFile(file: file, onProgress: onProgress);
+    String saved;
     try {
-      return await NativeTelegramChannel.saveToDownloads(
+      saved = await NativeTelegramChannel.saveToDownloads(
         sourcePath: local,
         fileName: file.name,
         mimeType: file.mimeType,
@@ -29,12 +32,29 @@ class FileActionService {
       // Android 9 and older require the legacy runtime storage permission.
       final status = await Permission.storage.request();
       if (!status.isGranted) rethrow;
-      return NativeTelegramChannel.saveToDownloads(
+      saved = await NativeTelegramChannel.saveToDownloads(
         sourcePath: local,
         fileName: file.name,
         mimeType: file.mimeType,
       );
     }
+    await _maybeNotifyDownload(file.name);
+    return saved;
+  }
+
+  static Future<void> _maybeNotifyDownload(String name) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool(PrefKeys.transferNotifications) ?? true) {
+        await NativeTelegramChannel.showNotification(
+          title: 'Download complete',
+          body: name,
+          id: name.hashCode & 0x7fffffff,
+          channelId: 'teledrive_transfers',
+          channelName: 'Transfers',
+        );
+      }
+    } catch (_) {}
   }
 
   static Future<void> share(

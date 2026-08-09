@@ -15,6 +15,9 @@ class FileActionService {
     DriveFile file, {
     void Function(double progress)? onProgress,
   }) async {
+    if (file.isIncomplete) {
+      throw StateError('Cannot download an incomplete file. Re-upload the original file to resume.');
+    }
     final local = await repository.downloadFile(file: file, onProgress: onProgress);
     try {
       return await NativeTelegramChannel.saveToDownloads(
@@ -41,6 +44,9 @@ class FileActionService {
 
   static Future<void> shareMany(
       DriveRepository repository, List<DriveFile> files) async {
+    for (final f in files) {
+      if (f.isIncomplete) throw StateError('Cannot share incomplete file "${f.name}".');
+    }
     final localFiles = <XFile>[];
     for (final file in files) {
       var path = file.localPath;

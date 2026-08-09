@@ -105,14 +105,28 @@ class _AudioPreviewScreenState extends ConsumerState<AudioPreviewScreen> {
   @override
   Widget build(BuildContext context) {
     final driveState = ref.watch(driveProvider);
-    final file =
-        driveState.files.where((f) => f.id == widget.fileId).firstOrNull;
+    final file = driveState.files.where((f) => f.id == widget.fileId).firstOrNull;
+    if (file != null && file.isIncomplete) {
+      return Scaffold(
+        appBar: AppBar(actions: [IconButton(icon: const Icon(Icons.share_rounded), onPressed: _share)]),
+        body: const Center(
+          child: Padding(
+            padding: EdgeInsets.all(32),
+            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 56),
+              SizedBox(height: 16),
+              Text('Incomplete file', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
+              SizedBox(height: 8),
+              Text('This audio file is incomplete — upload was interrupted.', textAlign: TextAlign.center),
+            ]),
+          ),
+        ),
+      );
+    }
 
     return Scaffold(
       appBar: AppBar(
-        actions: [
-          IconButton(icon: const Icon(Icons.share_rounded), onPressed: _share),
-        ],
+        actions: [IconButton(icon: const Icon(Icons.share_rounded), onPressed: _share)],
       ),
       body: Padding(
         padding: const EdgeInsets.all(32),

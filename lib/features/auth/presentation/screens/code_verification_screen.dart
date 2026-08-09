@@ -83,10 +83,15 @@ class _CodeVerificationScreenState
 
     ref.listen(authProvider, (_, next) {
       if (next.error != null) {
+        final isTimeout = next.error == AppText.connectionTimedOut;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(next.error!),
             backgroundColor: AppColors.error,
+            duration: Duration(seconds: isTimeout ? 5 : 4),
+            action: isTimeout
+                ? SnackBarAction(label: 'Retry', textColor: Colors.white, onPressed: () => _verify())
+                : null,
           ),
         );
         ref.read(authProvider.notifier).clearError();

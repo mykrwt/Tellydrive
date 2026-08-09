@@ -78,10 +78,22 @@ class _PdfPreviewScreenState extends ConsumerState<PdfPreviewScreen> {
   }
 
   Widget _buildPdfBody(BuildContext context, DriveFile file) {
+    if (file.isIncomplete) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: const [
+            Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 56),
+            SizedBox(height: 16),
+            Text('Incomplete file', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
+            SizedBox(height: 8),
+            Text('This file is incomplete — upload was interrupted.\nDelete it or re-upload the original file.', textAlign: TextAlign.center),
+          ]),
+        ),
+      );
+    }
     final localPath = _downloadedPath ?? file.localPath;
-    if (localPath == null ||
-        localPath.isEmpty ||
-        !File(localPath).existsSync()) {
+    if (localPath == null || localPath.isEmpty || !File(localPath).existsSync()) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(32),

@@ -88,13 +88,22 @@ class _LoginCredentialsScreenState
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    // Listen for Auth errors
+    // Listen for Auth errors — with retry for transient network issues
     ref.listen(authProvider, (_, next) {
       if (next.error != null) {
+        final isTimeout = next.error == AppText.connectionTimedOut;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(next.error!),
             backgroundColor: AppColors.error,
+            duration: Duration(seconds: isTimeout ? 5 : 4),
+            action: isTimeout
+                ? SnackBarAction(
+                    label: 'Retry',
+                    textColor: Colors.white,
+                    onPressed: () => _submit(),
+                  )
+                : null,
           ),
         );
         ref.read(authProvider.notifier).clearError();

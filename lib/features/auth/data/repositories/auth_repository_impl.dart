@@ -44,29 +44,40 @@ class AuthRepositoryImpl implements AuthRepository {
 
     await _storage.write(StorageKeys.phone, cleanPhone);
 
-    // Start listening BEFORE initialize() so we never miss the first event.
-    // TDLib fires authorizationStateWaitPhoneNumber very quickly after init,
-    // and a broadcast stream does not replay past events — so the listener
-    // must already be attached when the event arrives.
+    // Retry wrapper for transient network/TDLib hiccups — short timeouts
+    // with exponential backoff keep the UX snappy.
+    await _withRetry(
+      () => _sendCodeAttempt(cleanPhone),
+      retries: 2,
+      baseTimeout: const Duration(seconds: 18),
+    );
+  }
+
+  Future<void> _sendCodeAttempt(String cleanPhone) async {
     _subscribeToAuthStream();
 
-    // Arm the future BEFORE calling initialize(), same reason as above.
+    // Arm the future BEFORE initialize() so we never miss the first event.
     final waitForPhone = _waitForState(
       'authorizationStateWaitPhoneNumber',
-      timeout: 30,
+      timeout: 15,
     );
 
-    // Initialize TDLib (native side reads api_id/api_hash from BuildConfig).
-    await NativeTelegramChannel.initialize();
+    await _withTimeout(
+      NativeTelegramChannel.initialize(),
+      const Duration(seconds: 12),
+    );
 
-    // Now await the already-armed future.
-    await waitForPhone;
+    await waitForPhone.timeout(
+      const Duration(seconds: 15),
+      onTimeout: () => throw TimeoutException('TDLib init timed out'),
+    );
 
-    // Send the phone number — Telegram will deliver the login code.
-    await NativeTelegramChannel.sendPhoneNumber(cleanPhone);
+    await _withTimeout(
+      NativeTelegramChannel.sendPhoneNumber(cleanPhone),
+      const Duration(seconds: 12),
+    );
 
-    // Wait for TDLib to confirm the code was sent.
-    await _waitForState('authorizationStateWaitCode', timeout: 25);
+    await _waitForState('authorizationStateWaitCode', timeout: 15);
   }
 
   @override
@@ -77,19 +88,28 @@ class AuthRepositoryImpl implements AuthRepository {
       throw ArgumentError('Login code cannot be empty.');
     }
 
-    await NativeTelegramChannel.checkCode(cleanCode);
+    return _withRetry(
+      () => _verifyCodeAttempt(cleanCode),
+      retries: 1,
+      baseTimeout: const Duration(seconds: 18),
+    );
+  }
+
+  Future<bool> _verifyCodeAttempt(String cleanCode) async {
+    await _withTimeout(
+      NativeTelegramChannel.checkCode(cleanCode),
+      const Duration(seconds: 12),
+    );
 
     final state = await _waitForAnyOf([
       'authorizationStateReady',
       'authorizationStateWaitPassword',
-    ], timeout: 25);
+    ], timeout: 15);
 
     if (state == 'authorizationStateReady') {
       await _onAuthenticated();
       return true;
     }
-
-    // authorizationStateWaitPassword means 2FA is needed.
     return false;
   }
 
@@ -98,19 +118,28 @@ class AuthRepositoryImpl implements AuthRepository {
     if (password.isEmpty) {
       throw ArgumentError('Password cannot be empty.');
     }
+    return _withRetry(
+      () => _verifyPasswordAttempt(password),
+      retries: 1,
+      baseTimeout: const Duration(seconds: 18),
+    );
+  }
 
-    await NativeTelegramChannel.checkPassword(password);
+  Future<bool> _verifyPasswordAttempt(String password) async {
+    await _withTimeout(
+      NativeTelegramChannel.checkPassword(password),
+      const Duration(seconds: 12),
+    );
 
     final state = await _waitForState(
       'authorizationStateReady',
-      timeout: 25,
+      timeout: 15,
     );
 
     if (state == 'authorizationStateReady') {
       await _onAuthenticated();
       return true;
     }
-
     return false;
   }
 
@@ -161,19 +190,47 @@ class AuthRepositoryImpl implements AuthRepository {
     }
   }
 
-  // ---------- Private helpers ----------
+  // ---------- Private helpers & resilience ----------
+
+  Future<T> _withTimeout<T>(Future<T> future, Duration timeout) {
+    return future.timeout(
+      timeout,
+      onTimeout: () => throw TimeoutException('Operation timed out after ${timeout.inSeconds}s'),
+    );
+  }
+
+  Future<T> _withRetry<T>(
+    Future<T> Function() action, {
+    int retries = 2,
+    Duration baseTimeout = const Duration(seconds: 18),
+  }) async {
+    var attempt = 0;
+    while (true) {
+      try {
+        return await action().timeout(baseTimeout + Duration(seconds: attempt * 3));
+      } catch (e) {
+        final isRetriable = e is TimeoutException ||
+            e.toString().contains('timed out') ||
+            e.toString().contains('TimeoutException') ||
+            e.toString().contains('Network is unreachable') ||
+            e.toString().contains('Connection') ||
+            e.toString().contains('Failed host lookup');
+        if (!isRetriable || attempt >= retries) rethrow;
+        final backoff = Duration(milliseconds: 600 * (1 << attempt));
+        await Future<void>.delayed(backoff);
+        attempt++;
+      }
+    }
+  }
 
   void _subscribeToAuthStream() {
     _sub?.cancel();
 
     _sub = NativeTelegramChannel.authStateStream.listen(
       (event) {
-        // This subscription keeps the stream active.
-        // State-specific waiting is handled by _waitForAnyOf().
+        // Keeps the broadcast stream active; per-call waiters handle state.
       },
-      onError: (_) {
-        // Errors are handled by _waitForAnyOf() listeners.
-      },
+      onError: (_) {},
     );
   }
 
@@ -195,14 +252,12 @@ class AuthRepositoryImpl implements AuthRepository {
       (event) {
         if (event['type'] == 'authState') {
           final state = event['state'] as String? ?? '';
-
           if (states.contains(state) && !completer.isCompleted) {
             completer.complete(state);
             sub.cancel();
           }
         } else if (event['type'] == 'error' && !completer.isCompleted) {
-          final message =
-              event['message'] as String? ?? 'Unknown Telegram error';
+          final message = event['message'] as String? ?? 'Unknown Telegram error';
           completer.completeError(Exception(message));
           sub.cancel();
         }
@@ -215,20 +270,23 @@ class AuthRepositoryImpl implements AuthRepository {
       },
     );
 
-    return completer.future.timeout(
-      Duration(seconds: timeout),
-      onTimeout: () {
-        sub.cancel();
-        throw TimeoutException(
-          'Telegram auth timed out waiting for: $states',
-        );
-      },
-    );
+    // Ensure subscription is cancelled on timeout as well.
+    try {
+      return await completer.future.timeout(
+        Duration(seconds: timeout),
+        onTimeout: () {
+          sub.cancel();
+          throw TimeoutException('Telegram auth timed out waiting for: $states');
+        },
+      );
+    } catch (e) {
+      await sub.cancel();
+      rethrow;
+    }
   }
 
   Future<void> _onAuthenticated() async {
     await _storage.write(StorageKeys.isLoggedIn, 'true');
-
     await _sub?.cancel();
     _sub = null;
   }

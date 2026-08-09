@@ -3,14 +3,13 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/routing/app_router.dart';
-import '../../../../services/platform/native_telegram_channel.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../drive/presentation/providers/drive_provider.dart';
+import '../providers/auto_backup_provider.dart';
 import '../providers/ftp_server_provider.dart';
 import '../providers/settings_provider.dart';
 
@@ -26,7 +25,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _wifiOnly = false;
   bool _galleryAutoplay = true;
   bool _notifications = true;
-  bool _biometric = false;
   bool _loaded = false;
 
   @override
@@ -42,7 +40,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _wifiOnly = prefs.getBool('uploads_wifi_only') ?? false;
       _galleryAutoplay = prefs.getBool('gallery_autoplay') ?? true;
       _notifications = prefs.getBool('transfer_notifications') ?? true;
-      _biometric = prefs.getBool('biometric_lock') ?? false;
       _loaded = true;
     });
   }
@@ -89,42 +86,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ],
                 ),
                 _Section(
-                  title: 'Telegram connection',
-                  children: [
-                    ListTile(
-                      leading: Icon(Icons.telegram, color: Theme.of(context).colorScheme.onSurface),
-                      title: const Text('TDLib connection'),
-                      subtitle: const Text('Telegram is the only storage backend'),
-                      trailing: const _StatusDot(label: 'Connected', color: Colors.green),
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.refresh),
-                      title: const Text('Refresh Telegram index'),
-                      subtitle: Text('${drive.folders.length} storage folder(s) discovered'),
-                      onTap: () async {
-                        await ref.read(driveProvider.notifier).loadAll();
-                        ref.invalidate(userProfileProvider);
-                      },
-                    ),
-                  ],
-                ),
-                _Section(
-                  title: 'Storage',
-                  children: [
-                    const ListTile(
-                      leading: Icon(Icons.cloud_outlined),
-                      title: Text('Storage provider'),
-                      subtitle: Text('Telegram Saved Messages and private channels'),
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.cleaning_services_outlined),
-                      title: const Text('Clear local TDLib cache'),
-                      subtitle: const Text('Cloud files remain in Telegram'),
-                      onTap: () => _runAction(() => NativeTelegramChannel.optimizeStorage(), 'Local cache cleared'),
-                    ),
-                  ],
-                ),
-                _Section(
                   title: 'Upload/download settings',
                   children: [
                     SwitchListTile(
@@ -165,7 +126,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     const ListTile(
                       leading: Icon(Icons.grid_3x3),
                       title: Text('Gallery grid'),
-                      subtitle: Text('Three columns • grouped by date'),
+                      subtitle: Text('Pinch to zoom • choose grid size'),
                     ),
                   ],
                 ),
@@ -211,45 +172,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                   ],
                 ),
-                _Section(
-                  title: 'Security',
-                  children: [
-                    SwitchListTile(
-                      secondary: const Icon(Icons.fingerprint),
-                      title: const Text('Biometric app lock'),
-                      subtitle: const Text('Require device authentication when opening TeleDrive'),
-                      value: _biometric,
-                      onChanged: _setBiometric,
-                    ),
-                    const ListTile(
-                      leading: Icon(Icons.key_outlined),
-                      title: Text('Telegram credentials'),
-                      subtitle: Text('API ID/hash stay in Android BuildConfig; session data is encrypted'),
-                    ),
-                  ],
-                ),
+                _AutoBackupSection(drive: drive),
                 _FtpSection(
                   state: ftp,
                   onConfigure: _configureFtp,
                   onToggle: ftp.running
                       ? ref.read(ftpServerProvider.notifier).stop
                       : ref.read(ftpServerProvider.notifier).start,
-                ),
-                _Section(
-                  title: 'Telegram/backend configuration',
-                  children: [
-                    const ListTile(
-                      leading: Icon(Icons.dns_outlined),
-                      title: Text('Backend architecture'),
-                      subtitle: Text('Native TDLib • Saved Messages • writable Telegram channels'),
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.folder_copy_outlined),
-                      title: const Text('Telegram storage folders'),
-                      subtitle: Text('${drive.folders.length} available'),
-                      onTap: ref.read(driveProvider.notifier).loadFolders,
-                    ),
-                  ],
                 ),
                 const _Section(
                   title: 'About',
@@ -261,9 +190,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       isThreeLine: true,
                     ),
                     ListTile(
-                      leading: Icon(Icons.code),
-                      title: Text('Backend foundation'),
-                      subtitle: Text('ali-abdollahzadeh/teledrive • TDLib'),
+                      leading: Icon(Icons.favorite_rounded, color: Colors.red),
+                      title: Text('Made with ❤️ by @myk.rwt'),
+                      subtitle: Text('Crafted with care for a premium experience'),
                     ),
                   ],
                 ),
@@ -282,29 +211,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ThemeMode.dark => 'Dark',
         ThemeMode.system => 'Use device setting',
       };
-
-  Future<void> _setBiometric(bool value) async {
-    if (value) {
-      try {
-        final auth = LocalAuthentication();
-        final supported = await auth.isDeviceSupported();
-        final authenticated = supported &&
-            await auth.authenticate(
-              localizedReason: 'Enable biometric lock for TeleDrive',
-            );
-        if (!authenticated) return;
-      } catch (error) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Device authentication is unavailable: $error')),
-          );
-        }
-        return;
-      }
-    }
-    if (mounted) setState(() => _biometric = value);
-    await _saveBool('biometric_lock', value);
-  }
 
   Future<void> _chooseTheme() async {
     final choice = await showModalBottomSheet<ThemeMode>(
@@ -386,15 +292,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     port.dispose();
   }
 
-  Future<void> _runAction(Future<void> Function() action, String success) async {
-    try {
-      await action();
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(success)));
-    } catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString()), backgroundColor: Colors.red));
-    }
-  }
-
   Future<void> _logout() async {
     final yes = await showDialog<bool>(
       context: context,
@@ -411,6 +308,107 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     await ref.read(ftpServerProvider.notifier).stop();
     await ref.read(authProvider.notifier).logout();
     if (mounted) context.go(AppRoutes.welcome);
+  }
+}
+
+class _AutoBackupSection extends ConsumerWidget {
+  const _AutoBackupSection({required this.drive});
+  final DriveState drive;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(autoBackupProvider);
+    final notifier = ref.read(autoBackupProvider.notifier);
+    final selectedCount = state.selectedFolderIds.length;
+    return _Section(
+      title: 'Automatic backup',
+      children: [
+        SwitchListTile(
+          secondary: const Icon(Icons.backup_outlined),
+          title: const Text('Auto Backup'),
+          subtitle: Text(state.enabled ? 'Enabled • backs up selected folders' : 'Disabled'),
+          value: state.enabled,
+          onChanged: (v) => notifier.setEnabled(v),
+        ),
+        ListTile(
+          leading: const Icon(Icons.folder_copy_outlined),
+          title: const Text('Select folders to back up'),
+          subtitle: Text(selectedCount == 0 ? 'No folders selected' : '$selectedCount folder(s) selected'),
+          trailing: const Icon(Icons.chevron_right_rounded),
+          enabled: state.enabled,
+          onTap: state.enabled ? () => _chooseFolders(context, ref) : null,
+        ),
+        if (state.enabled && selectedCount > 0)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Text(
+              'Auto backup will keep the selected folders in sync in the background. You can change the selection anytime.',
+              style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _chooseFolders(BuildContext context, WidgetRef ref) async {
+    final folders = ref.read(driveProvider).folders;
+    final current = Set<String>.from(ref.read(autoBackupProvider).selectedFolderIds);
+    final temp = Set<String>.from(current);
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => SafeArea(
+          child: Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const ListTile(title: Text('Choose folders to back up automatically', style: TextStyle(fontWeight: FontWeight.w700))),
+                const Divider(height: 1),
+                Flexible(
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: folders.map((f) {
+                      final selected = temp.contains(f.id);
+                      return CheckboxListTile(
+                        value: selected,
+                        title: Text(f.title),
+                        subtitle: Text(f.isSavedMessages ? 'Saved Messages' : 'Channel folder'),
+                        onChanged: (v) => setLocal(() {
+                          if (v == true) {
+                            temp.add(f.id);
+                          } else {
+                            temp.remove(f.id);
+                          }
+                        }),
+                      );
+                    }).toList(),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                  child: Row(
+                    children: [
+                      Expanded(child: OutlinedButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel'))),
+                      const SizedBox(width: 12),
+                      Expanded(child: FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save'))),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (confirmed == true) {
+      await ref.read(autoBackupProvider.notifier).setFolders(temp);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(temp.isEmpty ? 'Auto backup: no folders selected' : 'Auto backup: ${temp.length} folder(s) will be backed up')));
+      }
+    }
   }
 }
 

@@ -1,3 +1,6 @@
+import 'dart:convert' as dart_convert;
+import 'dart:io';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../domain/entities/drive_file.dart';
@@ -344,6 +347,8 @@ class DriveNotifier extends StateNotifier<DriveState> {
 
 // ─── Upload State ─────────────────────────────────────────────────────────────
 
+enum UploadStatus { pending, uploading, completed, failed }
+
 class UploadTask {
   final String id;
   final String localPath;
@@ -353,6 +358,7 @@ class UploadTask {
   final bool isComplete;
   final bool hasError;
   final String? error;
+  final UploadStatus status;
 
   const UploadTask({
     required this.id,
@@ -363,6 +369,7 @@ class UploadTask {
     this.isComplete = false,
     this.hasError = false,
     this.error,
+    this.status = UploadStatus.pending,
   });
 
   UploadTask copyWith({
@@ -370,45 +377,120 @@ class UploadTask {
     bool? isComplete,
     bool? hasError,
     String? error,
+    UploadStatus? status,
   }) {
+    final nextComplete = isComplete ?? this.isComplete;
+    final nextError = hasError ?? this.hasError;
+    UploadStatus nextStatus = status ?? this.status;
+    // Derive status from flags if not explicitly provided
+    if (status == null) {
+      if (nextComplete) {
+        nextStatus = UploadStatus.completed;
+      } else if (nextError) {
+        nextStatus = UploadStatus.failed;
+      } else if ((progress ?? this.progress) > 0) {
+        nextStatus = UploadStatus.uploading;
+      } else {
+        nextStatus = UploadStatus.pending;
+      }
+    }
     return UploadTask(
       id: id,
       localPath: localPath,
       fileName: fileName,
       folderId: folderId,
       progress: progress ?? this.progress,
-      isComplete: isComplete ?? this.isComplete,
-      hasError: hasError ?? this.hasError,
+      isComplete: nextComplete,
+      hasError: nextError,
       error: error ?? this.error,
+      status: nextStatus,
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'localPath': localPath,
+        'fileName': fileName,
+        'folderId': folderId,
+        'progress': progress,
+        'isComplete': isComplete,
+        'hasError': hasError,
+        'error': error,
+        'status': status.name,
+      };
+
+  factory UploadTask.fromJson(Map<String, dynamic> json) => UploadTask(
+        id: json['id'] as String,
+        localPath: json['localPath'] as String,
+        fileName: json['fileName'] as String,
+        folderId: json['folderId'] as String,
+        progress: (json['progress'] as num?)?.toDouble() ?? 0,
+        isComplete: json['isComplete'] as bool? ?? false,
+        hasError: json['hasError'] as bool? ?? false,
+        error: json['error'] as String?,
+        status: UploadStatus.values.firstWhere(
+          (e) => e.name == (json['status'] as String? ?? 'pending'),
+          orElse: () => UploadStatus.pending,
+        ),
+      );
 }
 
 class UploadState {
   final List<UploadTask> tasks;
   const UploadState({this.tasks = const []});
 
-  bool get hasActiveTasks => tasks.any((t) => !t.isComplete && !t.hasError);
+  bool get hasActiveTasks => tasks.any((t) => t.status == UploadStatus.uploading || t.status == UploadStatus.pending);
 }
 
 class UploadNotifier extends StateNotifier<UploadState> {
   final DriveRepository _repository;
   final Ref _ref;
+  static const _persistKey = 'pending_upload_tasks_v2';
 
-  UploadNotifier(this._repository, this._ref) : super(const UploadState());
+  UploadNotifier(this._repository, this._ref) : super(const UploadState()) {
+    _restorePersisted();
+  }
+
+  Future<void> _persist() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final pending = state.tasks.where((t) => !t.isComplete).toList();
+      final json = pending.map((t) => t.toJson()).toList();
+      await prefs.setString(_persistKey, dart_convert.jsonEncode(json));
+    } catch (_) {}
+  }
+
+  Future<void> _restorePersisted() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_persistKey);
+      if (raw == null || raw.isEmpty) return;
+      final list = dart_convert.jsonDecode(raw) as List;
+      final tasks = list.map((e) => UploadTask.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+      // Any uploading task from previous session is now considered failed/interrupted
+      // and can be retried (chunked uploads will resume via chunk resume keys).
+      final restored = tasks.map((t) {
+        if (t.status == UploadStatus.uploading || t.status == UploadStatus.pending) {
+          return t.copyWith(hasError: true, error: 'Interrupted — tap retry to resume', status: UploadStatus.failed);
+        }
+        return t;
+      }).toList();
+      if (restored.isNotEmpty) state = UploadState(tasks: restored);
+    } catch (_) {}
+  }
 
   Future<void> _uploadFileInternal(String taskId, String localPath, String fileName, String folderId) async {
     final prefs = await SharedPreferences.getInstance();
-    if (prefs.getBool('uploads_wifi_only') == true &&
-        !await NativeTelegramChannel.isOnWifi()) {
+    if (prefs.getBool('uploads_wifi_only') == true && !await NativeTelegramChannel.isOnWifi()) {
       throw StateError('Wi-Fi-only uploads are enabled. Connect to Wi-Fi and retry.');
     }
+    _updateTask(taskId, progress: 0.01, status: UploadStatus.uploading);
     await _repository.uploadFile(
       localPath: localPath,
       fileName: fileName,
       folderId: folderId,
       onProgress: (progress) {
-        _updateTask(taskId, progress: progress);
+        _updateTask(taskId, progress: progress, status: progress >= 1 ? UploadStatus.completed : UploadStatus.uploading);
       },
     );
   }
@@ -424,18 +506,20 @@ class UploadNotifier extends StateNotifier<UploadState> {
       localPath: localPath,
       fileName: fileName,
       folderId: folderId,
+      status: UploadStatus.pending,
     );
     state = UploadState(tasks: [...state.tasks, task]);
+    await _persist();
 
     try {
       await _uploadFileInternal(taskId, localPath, fileName, folderId);
-      _updateTask(taskId, progress: 1.0, isComplete: true);
-
-      // Give TDLib a brief moment to index the new message in the chat history
+      _updateTask(taskId, progress: 1.0, isComplete: true, hasError: false, status: UploadStatus.completed);
+      await _persist();
       await Future<void>.delayed(const Duration(milliseconds: 600));
       await _ref.read(driveProvider.notifier).loadFiles(folderId: folderId);
     } catch (e) {
-      _updateTask(taskId, hasError: true, error: e.toString());
+      _updateTask(taskId, hasError: true, error: e.toString(), status: UploadStatus.failed);
+      await _persist();
     }
   }
 
@@ -445,43 +529,46 @@ class UploadNotifier extends StateNotifier<UploadState> {
       if (candidate.id == taskId) task = candidate;
     }
     final retryTask = task;
-    if (retryTask == null || !retryTask.hasError) return;
-    _updateTask(taskId,
-        progress: retryTask.progress, hasError: false, error: '');
+    if (retryTask == null || retryTask.status != UploadStatus.failed) return;
+    // Validate source still exists before retrying — otherwise fail gracefully
     try {
-      await _uploadFileInternal(
-        taskId,
-        retryTask.localPath,
-        retryTask.fileName,
-        retryTask.folderId,
-      );
-      _updateTask(taskId, progress: 1, isComplete: true, hasError: false);
+      final file = File(retryTask.localPath);
+      // content:// URIs are already materialized to a cache path at upload time
+      if (!retryTask.localPath.startsWith('content://') && !await file.exists()) {
+        _updateTask(taskId, hasError: true, error: 'Original file no longer exists', status: UploadStatus.failed);
+        await _persist();
+        return;
+      }
+    } catch (_) {}
+    _updateTask(taskId, progress: retryTask.progress, hasError: false, error: '', status: UploadStatus.pending);
+    await _persist();
+    try {
+      await _uploadFileInternal(taskId, retryTask.localPath, retryTask.fileName, retryTask.folderId);
+      _updateTask(taskId, progress: 1, isComplete: true, hasError: false, status: UploadStatus.completed);
+      await _persist();
       await Future<void>.delayed(const Duration(milliseconds: 600));
-      await _ref
-          .read(driveProvider.notifier)
-          .loadFiles(folderId: retryTask.folderId);
+      await _ref.read(driveProvider.notifier).loadFiles(folderId: retryTask.folderId);
     } catch (error) {
-      _updateTask(taskId, hasError: true, error: error.toString());
+      _updateTask(taskId, hasError: true, error: error.toString(), status: UploadStatus.failed);
+      await _persist();
     }
   }
 
-  void _updateTask(String taskId,
-      {double? progress, bool? isComplete, bool? hasError, String? error}) {
+  void _updateTask(String taskId, {double? progress, bool? isComplete, bool? hasError, String? error, UploadStatus? status}) {
     final updated = state.tasks.map((t) {
       if (t.id == taskId) {
-        return t.copyWith(
-            progress: progress,
-            isComplete: isComplete,
-            hasError: hasError,
-            error: error);
+        return t.copyWith(progress: progress, isComplete: isComplete, hasError: hasError, error: error, status: status);
       }
       return t;
     }).toList();
     state = UploadState(tasks: updated);
+    // Persist asynchronously without blocking UI
+    _persist();
   }
 
   void clearCompleted() {
     final active = state.tasks.where((t) => !t.isComplete).toList();
     state = UploadState(tasks: active);
+    _persist();
   }
 }

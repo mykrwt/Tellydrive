@@ -45,11 +45,11 @@ class AppColors {
   static const Color dialogBackground = Color(0xFFFFFFFF);
   static const Color dialogBackgroundGray = Color(0xFFF0F0F0);
   static const Color dialogTextBlack = defaultBlackText;
-  static const Color dialogTextLink = Color(0xFF2678B6);
-  static const Color dialogTextBlue = Color(0xFF2F8CC9);
-  static const Color dialogTextBlue2 = Color(0xFF3A95D5);
-  static const Color dialogTextBlue4 = Color(0xFF19A7E8);
-  static const Color dialogTextGray = Color(0xFF348BC1);
+  static const Color dialogTextLink = Color(0xFF6B7280);
+  static const Color dialogTextBlue = Color(0xFF6B7280);
+  static const Color dialogTextBlue2 = Color(0xFF6B7280);
+  static const Color dialogTextBlue4 = Color(0xFF6B7280);
+  static const Color dialogTextGray = Color(0xFF6B7280);
   static const Color dialogTextGray2 = Color(0xFF757575);
   static const Color dialogTextGray3 = Color(0xFF999999);
   static const Color dialogTextGray4 = Color(0xFFB3B3B3);
@@ -89,7 +89,7 @@ class AppColors {
   static const Color chatsOnlineCircle = Color(0xFF4BCB1C);
   static const Color chatsMuteIcon = Color(0xFFBDC1C4);
   static const Color chatsPinnedIcon = Color(0xFF919294);
-  static const Color chatsVerifiedBackground = Color(0xFF33A8E6);
+  static const Color chatsVerifiedBackground = Color(0xFF6B7280);
   static const Color chatsVerifiedCheck = Color(0xFFFFFFFF);
 
   // ---------------------------------------------------------------------------
@@ -108,8 +108,8 @@ class AppColors {
 
   static const Color chatMessageTextIn = Color(0xFF000000);
   static const Color chatMessageTextOut = Color(0xFF000000);
-  static const Color chatMessageLinkIn = Color(0xFF2678B6);
-  static const Color chatMessageLinkOut = Color(0xFF2678B6);
+  static const Color chatMessageLinkIn = Color(0xFF6B7280);
+  static const Color chatMessageLinkOut = Color(0xFF6B7280);
 
   static const Color chatInTimeText = Color(0xFFA1AAB3);
   static const Color chatOutTimeText = Color(0xFF70B15C);
@@ -125,11 +125,11 @@ class AppColors {
   static const Color chatMessagePanelBackground = Color(0xFFFFFFFF);
   static const Color chatMessagePanelText = Color(0xFF000000);
   static const Color chatMessagePanelHint = Color(0xFF858A84);
-  static const Color chatMessagePanelCursor = Color(0xFF54A1DB);
+  static const Color chatMessagePanelCursor = Color(0xFF141619);
   static const Color chatMessagePanelIcons = Color(0xFF8E959B);
   static const Color chatMessagePanelSend = teledriveBlue;
 
-  static const Color chatReplyPanelIcons = Color(0xFF57A8E6);
+  static const Color chatReplyPanelIcons = Color(0xFF6B7280);
   static const Color chatReplyPanelClose = Color(0xFF8E959B);
   static const Color chatReplyPanelName = teledriveBlueText;
   static const Color chatReplyPanelLine = Color(0xFFE8E8E8);
@@ -149,26 +149,27 @@ class AppColors {
   static const Color avatarSaved = Color(0xFF4B5563);
   static const Color avatarSaved2 = Color(0xFF374151);
 
-  static const Color avatarRed = Color(0xFFFF845E);
-  static const Color avatarRed2 = Color(0xFFD45246);
+  // Monochrome avatar palette — black / grey / white only
+  static const Color avatarRed = Color(0xFF4B5563);
+  static const Color avatarRed2 = Color(0xFF374151);
 
-  static const Color avatarOrange = Color(0xFFFEBB5B);
-  static const Color avatarOrange2 = Color(0xFFF68136);
+  static const Color avatarOrange = Color(0xFF6B7280);
+  static const Color avatarOrange2 = Color(0xFF4B5563);
 
-  static const Color avatarViolet = Color(0xFFB694F9);
-  static const Color avatarViolet2 = Color(0xFF6C61DF);
+  static const Color avatarViolet = Color(0xFF9CA3AF);
+  static const Color avatarViolet2 = Color(0xFF6B7280);
 
-  static const Color avatarGreen = Color(0xFF9AD164);
-  static const Color avatarGreen2 = Color(0xFF46BA43);
+  static const Color avatarGreen = Color(0xFF374151);
+  static const Color avatarGreen2 = Color(0xFF1F2328);
 
-  static const Color avatarCyan = Color(0xFF5BCBE3);
-  static const Color avatarCyan2 = Color(0xFF359AD4);
+  static const Color avatarCyan = Color(0xFF6B7280);
+  static const Color avatarCyan2 = Color(0xFF374151);
 
-  static const Color avatarBlue = Color(0xFF5CAFFA);
-  static const Color avatarBlue2 = Color(0xFF408ACF);
+  static const Color avatarBlue = Color(0xFF2C3038);
+  static const Color avatarBlue2 = Color(0xFF141619);
 
-  static const Color avatarPink = Color(0xFFFF8AAC);
-  static const Color avatarPink2 = Color(0xFFD95574);
+  static const Color avatarPink = Color(0xFF9CA3AF);
+  static const Color avatarPink2 = Color(0xFF6B7280);
 
   static const Color avatarGray = Color(0xFFA1ABB5);
 
@@ -198,25 +199,26 @@ class AppColors {
   // teledrive chart / generic color set
   // ---------------------------------------------------------------------------
 
-  static const Color colorBlue = Color(0xFF327FE5);
-  static const Color colorGreen = Color(0xFF61C752);
-  static const Color colorRed = Color(0xFFE05356);
-  static const Color colorYellow = Color(0xFFEBA52D);
-  static const Color colorLightBlue = Color(0xFF58A8ED);
-  static const Color colorLightGreen = Color(0xFF8FCF39);
-  static const Color colorOrange = Color(0xFFF28C39);
-  static const Color colorPurple = Color(0xFF9F79E8);
-  static const Color colorCyan = Color(0xFF40D0CA);
+  static const Color colorBlue = Color(0xFF6B7280);
+  static const Color colorGreen = Color(0xFF6B7280);
+  static const Color colorRed = Color(0xFF6B7280);
+  static const Color colorYellow = Color(0xFF9CA3AF);
+  static const Color colorLightBlue = Color(0xFF9CA3AF);
+  static const Color colorLightGreen = Color(0xFF9CA3AF);
+  static const Color colorOrange = Color(0xFF6B7280);
+  static const Color colorPurple = Color(0xFF6B7280);
+  static const Color colorCyan = Color(0xFF9CA3AF);
 
   // ---------------------------------------------------------------------------
   // Premium / gradients
   // ---------------------------------------------------------------------------
 
-  static const Color premiumGradient0 = Color(0xFF4ACD43);
-  static const Color premiumGradient1 = Color(0xFF55A5FF);
-  static const Color premiumGradient2 = Color(0xFFA767FF);
-  static const Color premiumGradient3 = Color(0xFFDB5C9D);
-  static const Color premiumGradient4 = Color(0xFFF38926);
+  // Premium gradient — monochrome (black / grey)
+  static const Color premiumGradient0 = Color(0xFF4B5563);
+  static const Color premiumGradient1 = Color(0xFF374151);
+  static const Color premiumGradient2 = Color(0xFF1F2328);
+  static const Color premiumGradient3 = Color(0xFF6B7280);
+  static const Color premiumGradient4 = Color(0xFF9CA3AF);
 
   // ---------------------------------------------------------------------------
   // Legacy aliases used across your app
@@ -260,15 +262,15 @@ class AppColors {
   // Gradients
   // ---------------------------------------------------------------------------
 
-  /// The custom washed-out blue gradient for white mode backgrounds
+  /// Subtle monochrome wash for light backgrounds — black/grey/white only
   static const LinearGradient washedBlueBackground = LinearGradient(
     begin: Alignment.topRight,
     end: Alignment.bottomLeft,
     stops: [0.0, 0.494, 0.978],
     colors: [
-      Color(0x00FFFFFF), // Transparent white (0% opacity)
-      Color(0x4D00A6FA), // #00A6FA at 30% opacity
-      Color(0x00FFFFFF), // Transparent white (0% opacity)
+      Color(0x00FFFFFF),
+      Color(0x12141619), // 7% black — soft premium grey wash
+      Color(0x00FFFFFF),
     ],
   );
 
@@ -346,18 +348,17 @@ class AppColors {
     end: Alignment.bottomRight,
   );
 
-  /// Dark Mode: The diagonal teal sweep (Layer 2)
+  /// Dark Mode: subtle diagonal grey sweep — monochrome only
   static const LinearGradient darkTealSweep = LinearGradient(
     begin: Alignment.topRight,
     end: Alignment.bottomLeft,
     stops: [0.0, 0.15, 0.5, 0.85, 1.0],
     colors: [
-      Color(0x00167491), // 0% opacity teal (Transparent)
-      Color(0x33167491), // 20% opacity teal - intermediate stop for smoothing
-      Color(
-          0x80167491), // 50% opacity teal - reduced from 100% to prevent harsh banding
-      Color(0x33167491), // 20% opacity teal - intermediate stop for smoothing
-      Color(0x00167491), // 0% opacity teal (Transparent)
+      Color(0x002B3039),
+      Color(0x332B3039),
+      Color(0x802B3039),
+      Color(0x332B3039),
+      Color(0x002B3039),
     ],
   );
 

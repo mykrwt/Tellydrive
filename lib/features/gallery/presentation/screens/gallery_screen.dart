@@ -1,9 +1,11 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../drive/domain/entities/drive_file.dart';
 import '../../../drive/presentation/providers/drive_provider.dart';
@@ -21,6 +23,12 @@ class GalleryScreen extends ConsumerStatefulWidget {
 class _GalleryScreenState extends ConsumerState<GalleryScreen> {
   final Set<String> _selected = {};
   bool _busy = false;
+  // Pinch-to-zoom: number of columns (2 = large, 5 = small). Persisted.
+  int _columns = 3;
+  bool _showZoomHint = false;
+  bool _pinchConsumed = false;
+  static const _minColumns = 2;
+  static const _maxColumns = 5;
 
   String _key(DriveFile file) => '${file.folderId}:${file.id}';
 
@@ -121,6 +129,67 @@ class _GalleryScreenState extends ConsumerState<GalleryScreen> {
     }
   }
 
+  @override
+  void initState() {
+    super.initState();
+    _loadColumns();
+  }
+
+  Future<void> _loadColumns() async {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        final sp = await SharedPreferences.getInstance();
+        final saved = sp.getInt('gallery_columns');
+        if (saved != null && saved >= _minColumns && saved <= _maxColumns && mounted) {
+          setState(() => _columns = saved);
+        }
+      } catch (_) {}
+    });
+  }
+
+  Future<void> _saveColumns(int columns) async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setInt('gallery_columns', columns);
+    } catch (_) {}
+  }
+
+  void _handleScaleStart(ScaleStartDetails _) {
+    _pinchConsumed = false;
+  }
+
+  void _handleScaleUpdate(ScaleUpdateDetails details) {
+    if (_pinchConsumed) return;
+    final scale = details.scale;
+    if (scale > 1.25 && _columns > _minColumns) {
+      HapticFeedback.selectionClick();
+      setState(() {
+        _columns--;
+        _showZoomHint = true;
+        _pinchConsumed = true;
+      });
+      _saveColumns(_columns);
+      Future.delayed(const Duration(milliseconds: 900), () {
+        if (mounted) setState(() => _showZoomHint = false);
+      });
+    } else if (scale < 0.75 && _columns < _maxColumns) {
+      HapticFeedback.selectionClick();
+      setState(() {
+        _columns++;
+        _showZoomHint = true;
+        _pinchConsumed = true;
+      });
+      _saveColumns(_columns);
+      Future.delayed(const Duration(milliseconds: 900), () {
+        if (mounted) setState(() => _showZoomHint = false);
+      });
+    }
+  }
+
+  void _handleScaleEnd(ScaleEndDetails _) {
+    _pinchConsumed = false;
+  }
+
   void _showError(Object error) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(error.toString()), backgroundColor: Colors.red),
@@ -186,53 +255,78 @@ class _GalleryScreenState extends ConsumerState<GalleryScreen> {
                             SizedBox(height: 12),
                             Text('No photos or videos in Telegram storage', textAlign: TextAlign.center),
                           ])
-                        : CustomScrollView(
-                            slivers: [
-                              for (final group in groups.entries) ...[
-                                SliverToBoxAdapter(
-                                  child: Padding(
-                                    padding: const EdgeInsets.fromLTRB(12, 18, 12, 8),
-                                    child: Text(group.key, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                        : GestureDetector(
+                            onScaleStart: _handleScaleStart,
+                            onScaleUpdate: _handleScaleUpdate,
+                            onScaleEnd: _handleScaleEnd,
+                            child: CustomScrollView(
+                              slivers: [
+                                for (final group in groups.entries) ...[
+                                  SliverToBoxAdapter(
+                                    child: Padding(
+                                      padding: const EdgeInsets.fromLTRB(12, 18, 12, 8),
+                                      child: Text(group.key, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                                    ),
                                   ),
-                                ),
-                                SliverGrid(
-                                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                                    crossAxisCount: 3,
-                                    mainAxisSpacing: 2,
-                                    crossAxisSpacing: 2,
+                                  SliverGrid(
+                                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount: _columns,
+                                      mainAxisSpacing: 2,
+                                      crossAxisSpacing: 2,
+                                    ),
+                                    delegate: SliverChildBuilderDelegate(
+                                      (context, index) {
+                                        final file = group.value[index];
+                                        final selected = _selected.contains(_key(file));
+                                        return _GalleryTile(
+                                          file: file,
+                                          selected: selected,
+                                          selectionMode: selectionMode,
+                                          onTap: () {
+                                            if (selectionMode) {
+                                              _toggle(file);
+                                            } else {
+                                              final itemIndex = state.media.indexOf(file);
+                                              Navigator.of(context).push(MaterialPageRoute(
+                                                builder: (_) => GalleryViewerScreen(
+                                                  media: state.media,
+                                                  initialIndex: itemIndex,
+                                                ),
+                                              ));
+                                            }
+                                          },
+                                          onLongPress: () => _toggle(file),
+                                        );
+                                      },
+                                      childCount: group.value.length,
+                                    ),
                                   ),
-                                  delegate: SliverChildBuilderDelegate(
-                                    (context, index) {
-                                      final file = group.value[index];
-                                      final selected = _selected.contains(_key(file));
-                                      return _GalleryTile(
-                                        file: file,
-                                        selected: selected,
-                                        selectionMode: selectionMode,
-                                        onTap: () {
-                                          if (selectionMode) {
-                                            _toggle(file);
-                                          } else {
-                                            final itemIndex = state.media.indexOf(file);
-                                            Navigator.of(context).push(MaterialPageRoute(
-                                              builder: (_) => GalleryViewerScreen(
-                                                media: state.media,
-                                                initialIndex: itemIndex,
-                                              ),
-                                            ));
-                                          }
-                                        },
-                                        onLongPress: () => _toggle(file),
-                                      );
-                                    },
-                                    childCount: group.value.length,
-                                  ),
-                                ),
+                                ],
+                                const SliverPadding(padding: EdgeInsets.only(bottom: 100)),
                               ],
-                              const SliverPadding(padding: EdgeInsets.only(bottom: 100)),
-                            ],
+                            ),
                           ),
           ),
+          if (_showZoomHint)
+            Positioned(
+              bottom: 24,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.78),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.grid_view_rounded, color: Colors.white, size: 16),
+                    const SizedBox(width: 6),
+                    Text('$_columns columns', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                  ]),
+                ),
+              ),
+            ),
           if (_busy) const Positioned.fill(child: ColoredBox(color: Color(0x66000000), child: Center(child: CircularProgressIndicator()))),
         ],
       ),
@@ -290,13 +384,28 @@ class _GalleryTileState extends ConsumerState<_GalleryTile> {
 
   @override
   Widget build(BuildContext context) {
+    final isIncomplete = widget.file.isIncomplete;
     return GestureDetector(
-      onTap: widget.onTap,
+      onTap: () {
+        if (isIncomplete) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('This file is incomplete — upload was interrupted. Delete or re-upload to fix.')),
+          );
+          return;
+        }
+        widget.onTap();
+      },
       onLongPress: widget.onLongPress,
       child: Stack(fit: StackFit.expand, children: [
         FutureBuilder<String?>(
           future: _thumbnail,
           builder: (context, snapshot) {
+            if (snapshot.hasError) {
+              return ColoredBox(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                child: Icon(Icons.broken_image_outlined, color: Theme.of(context).colorScheme.onSurfaceVariant),
+              );
+            }
             final path = snapshot.data;
             if (path != null && path.isNotEmpty && File(path).existsSync()) {
               return Image.file(File(path), fit: BoxFit.cover, cacheWidth: 420);
@@ -310,9 +419,23 @@ class _GalleryTileState extends ConsumerState<_GalleryTile> {
             );
           },
         ),
-        if (widget.file.type == DriveFileType.video)
+        if (isIncomplete)
+          Positioned.fill(
+            child: Container(
+              color: Colors.black.withValues(alpha: 0.56),
+              child: const Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.warning_amber_rounded, color: Colors.white, size: 28),
+                  SizedBox(height: 4),
+                  Text('Incomplete', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+                ],
+              ),
+            ),
+          ),
+        if (!isIncomplete && widget.file.type == DriveFileType.video)
           const Positioned(left: 7, bottom: 6, child: Icon(Icons.play_circle_fill, color: Colors.white, size: 22, shadows: [Shadow(blurRadius: 4)])),
-        if (widget.file.isChunked)
+        if (!isIncomplete && widget.file.isChunked)
           const Positioned(right: 6, bottom: 6, child: Icon(Icons.layers_rounded, color: Colors.white, size: 18, shadows: [Shadow(blurRadius: 4)])),
         if (widget.selectionMode)
           Positioned(
@@ -324,28 +447,16 @@ class _GalleryTileState extends ConsumerState<_GalleryTile> {
               height: 24,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: widget.selected
-                    ? const Color(0xFFFFFFFF)
-                    : const Color(0x66000000),
-                border: Border.all(
-                  color: const Color(0xFFFFFFFF),
-                  width: 1.8,
-                ),
+                color: widget.selected ? const Color(0xFFFFFFFF) : const Color(0x66000000),
+                border: Border.all(color: const Color(0xFFFFFFFF), width: 1.8),
               ),
-              child: widget.selected
-                  ? const Icon(Icons.check, color: Color(0xFF111315), size: 15)
-                  : null,
+              child: widget.selected ? const Icon(Icons.check, color: Color(0xFF111315), size: 15) : null,
             ),
           ),
         if (widget.selected)
           Positioned.fill(
             child: DecoratedBox(
-              decoration: BoxDecoration(
-                border: Border.all(
-                  color: const Color(0xFFFFFFFF),
-                  width: 3,
-                ),
-              ),
+              decoration: BoxDecoration(border: Border.all(color: const Color(0xFFFFFFFF), width: 3)),
             ),
           ),
       ]),

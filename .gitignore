@@ -1,22 +1,47 @@
-# Flutter / Dart
-.dart_tool/
-.packages
-build/
-.flutter-plugins
-.flutter-plugins-dependencies
-*.iml
-.idea/
-
-# Local caches & ephemeral
-.coverage/
-.tenv/
-.env
-.data/
-
-# OS
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
 .DS_Store
-Thumbs.db
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
 
 # IDE
+*.iml
+*.ipr
+*.iws
+.idea/
 .vscode/
-*.swp
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+coverage/
+**/doc/api/
+**/ios/Flutter/.last_build_id
+
+# Android
+android/.gradle/
+android/local.properties
+android/secrets.properties
+android/key.properties
+android/app/debug/
+android/app/profile/
+android/app/release/
+*.apk
+*.aab
+
+# Generated symbols
+app.*.symbols
+app.*.map.json

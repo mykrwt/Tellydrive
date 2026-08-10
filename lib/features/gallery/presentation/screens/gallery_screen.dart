@@ -12,6 +12,8 @@ import '../../../../core/constants/app_constants.dart';
 import '../../../../services/files/file_action_service.dart';
 import '../../../drive/domain/entities/drive_file.dart';
 import '../../../drive/presentation/providers/drive_provider.dart';
+import '../../../vault/presentation/providers/vault_provider.dart';
+import '../../../vault/presentation/screens/vault_login_screen.dart';
 import '../providers/gallery_provider.dart';
 import 'gallery_viewer_screen.dart';
 
@@ -148,6 +150,46 @@ class _GalleryScreenState extends ConsumerState<GalleryScreen> {
     }
   }
 
+  Future<void> _moveToVault(List<DriveFile> files) async {
+    if (files.isEmpty) return;
+    final vaultState = ref.read(vaultProvider);
+    if (!vaultState.isUnlocked || vaultState.unlockedKey == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please unlock your Hidden Vault first.')),
+      );
+      _openVaultLogin(context);
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await ref.read(vaultProvider.notifier).moveFromGalleryToVault(files);
+      if (mounted) {
+        setState(_selected.clear);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${files.length} item(s) encrypted and moved to Hidden Vault.')),
+        );
+      }
+    } catch (error) {
+      if (mounted) _showError(error);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  bool _vaultLoginOpen = false;
+
+  void _openVaultLogin(BuildContext context) {
+    if (_vaultLoginOpen) return;
+    _vaultLoginOpen = true;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const VaultLoginScreen(),
+      ),
+    ).whenComplete(() {
+      _vaultLoginOpen = false;
+    });
+  }
+
   @override
   void initState() {
     super.initState();
@@ -214,8 +256,27 @@ class _GalleryScreenState extends ConsumerState<GalleryScreen> {
     );
   }
 
+  Timer? _scrollHoldTimer;
+
+  void _checkScrollVaultTrigger(ScrollMetrics metrics) {
+    if (metrics.maxScrollExtent > 0 &&
+        metrics.pixels >= metrics.maxScrollExtent - 10) {
+      if (_scrollHoldTimer == null && !_vaultLoginOpen) {
+        _scrollHoldTimer = Timer(const Duration(milliseconds: 2000), () {
+          _scrollHoldTimer = null;
+          HapticFeedback.heavyImpact();
+          _openVaultLogin(context);
+        });
+      }
+    } else {
+      _scrollHoldTimer?.cancel();
+      _scrollHoldTimer = null;
+    }
+  }
+
   @override
   void dispose() {
+    _scrollHoldTimer?.cancel();
     _hintTimer?.cancel();
     super.dispose();
   }
@@ -256,12 +317,17 @@ class _GalleryScreenState extends ConsumerState<GalleryScreen> {
             ),
         ],
       ),
-      body: Stack(
-        children: [
-          RefreshIndicator(
-            onRefresh: ref.read(galleryProvider.notifier).refresh,
-            child: state.isLoading && state.media.isEmpty
-                ? const Center(child: CircularProgressIndicator())
+      body: NotificationListener<ScrollNotification>(
+        onNotification: (notification) {
+          _checkScrollVaultTrigger(notification.metrics);
+          return false;
+        },
+        child: Stack(
+          children: [
+            RefreshIndicator(
+              onRefresh: ref.read(galleryProvider.notifier).refresh,
+              child: state.isLoading && state.media.isEmpty
+                  ? const Center(child: CircularProgressIndicator())
                 : state.error != null && state.media.isEmpty
                     ? _MessageState(
                         icon: Icons.cloud_off_outlined,
@@ -271,11 +337,14 @@ class _GalleryScreenState extends ConsumerState<GalleryScreen> {
                         onAction: ref.read(galleryProvider.notifier).refresh,
                       )
                     : state.media.isEmpty
-                        ? _MessageState(
-                            icon: Icons.photo_library_outlined,
-                            title: 'No photos or videos yet',
-                            message:
-                                'Media you upload or back up to Telegram will appear here.',
+                        ? _VaultTriggerArea(
+                            onTrigger: () => _openVaultLogin(context),
+                            child: const _MessageState(
+                              icon: Icons.photo_library_outlined,
+                              title: 'No photos or videos yet',
+                              message:
+                                  'Media you upload or back up to Telegram will appear here.',
+                            ),
                           )
                         : GestureDetector(
                             onScaleStart: _handleScaleStart,
@@ -287,6 +356,7 @@ class _GalleryScreenState extends ConsumerState<GalleryScreen> {
                               selected: _selected,
                               selectionMode: selectionMode,
                               onToggle: _toggle,
+                              onVaultTrigger: () => _openVaultLogin(context),
                               onOpen: (file) {
                                 final itemIndex = state.media.indexOf(file);
                                 Navigator.of(context).push(MaterialPageRoute(
@@ -330,6 +400,7 @@ class _GalleryScreenState extends ConsumerState<GalleryScreen> {
                     child: Center(child: CircularProgressIndicator()))),
         ],
       ),
+      ),
       bottomNavigationBar: selectionMode
           ? SafeArea(
               child: SizedBox(
@@ -337,6 +408,7 @@ class _GalleryScreenState extends ConsumerState<GalleryScreen> {
                 child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
                   IconButton(tooltip: 'Share', onPressed: _busy ? null : () => _share(selectedFiles), icon: const Icon(Icons.ios_share)),
                   IconButton(tooltip: 'Download', onPressed: _busy ? null : () => _download(selectedFiles), icon: const Icon(Icons.download_outlined)),
+                  IconButton(tooltip: 'Move to Hidden Vault', onPressed: _busy ? null : () => _moveToVault(selectedFiles), icon: const Icon(Icons.lock_outline_rounded)),
                   IconButton(tooltip: 'Delete', onPressed: _busy ? null : () => _delete(selectedFiles), icon: const Icon(Icons.delete_outline, color: Colors.red)),
                 ]),
               ),
@@ -356,6 +428,7 @@ class _AnimatedGrid extends StatelessWidget {
     required this.selected,
     required this.selectionMode,
     required this.onToggle,
+    required this.onVaultTrigger,
     required this.onOpen,
   });
 
@@ -364,6 +437,7 @@ class _AnimatedGrid extends StatelessWidget {
   final Set<String> selected;
   final bool selectionMode;
   final void Function(DriveFile) onToggle;
+  final VoidCallback onVaultTrigger;
   final void Function(DriveFile) onOpen;
 
   @override
@@ -417,7 +491,13 @@ class _AnimatedGrid extends StatelessWidget {
                 ),
               ),
             ],
-            const SliverPadding(padding: EdgeInsets.only(bottom: 100)),
+            SliverToBoxAdapter(
+              child: _VaultTriggerArea(
+                onTrigger: onVaultTrigger,
+                child: const SizedBox(height: 120, width: double.infinity),
+              ),
+            ),
+            const SliverPadding(padding: EdgeInsets.only(bottom: 24)),
           ],
         );
       },
@@ -589,3 +669,50 @@ class _GalleryTileState extends ConsumerState<_GalleryTile> {
     );
   }
 }
+
+class _VaultTriggerArea extends StatefulWidget {
+  const _VaultTriggerArea({required this.onTrigger, required this.child});
+  final VoidCallback onTrigger;
+  final Widget child;
+
+  @override
+  State<_VaultTriggerArea> createState() => _VaultTriggerAreaState();
+}
+
+class _VaultTriggerAreaState extends State<_VaultTriggerArea> {
+  Timer? _timer;
+
+  void _startTimer() {
+    _timer?.cancel();
+    _timer = Timer(const Duration(milliseconds: 2000), () {
+      HapticFeedback.heavyImpact();
+      widget.onTrigger();
+    });
+  }
+
+  void _cancelTimer() {
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  @override
+  void dispose() {
+    _cancelTimer();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onLongPressStart: (_) => _startTimer(),
+      onLongPressEnd: (_) => _cancelTimer(),
+      onLongPressCancel: () => _cancelTimer(),
+      onTapDown: (_) => _startTimer(),
+      onTapUp: (_) => _cancelTimer(),
+      onTapCancel: () => _cancelTimer(),
+      child: widget.child,
+    );
+  }
+}
+

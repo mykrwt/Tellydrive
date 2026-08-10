@@ -1,9 +1,13 @@
+import '../../../../services/vault/vault_metadata.dart';
 import '../entities/drive_file.dart';
 import '../entities/drive_folder.dart';
 
 abstract class DriveRepository {
   /// Get real files from Saved Messages or a Telegram channel folder.
   Future<List<DriveFile>> getFiles({String? folderId});
+
+  /// Get encrypted Hidden Vault files from Telegram storage.
+  Future<List<DriveFile>> getVaultFiles({String? folderId});
 
   /// Get Telegram-backed folders (Saved Messages and writable channels).
   Future<List<DriveFolder>> getFolders();
@@ -14,6 +18,16 @@ abstract class DriveRepository {
     required String localPath,
     required String fileName,
     required String folderId,
+    void Function(double progress)? onProgress,
+  });
+
+  /// Uploads an already-encrypted `.tdvault` file to Telegram with Vault recovery
+  /// metadata stored in its document caption.
+  Future<DriveFile> uploadVaultFile({
+    required String localPath,
+    required String fileName,
+    required String folderId,
+    required VaultMetadata vaultMetadata,
     void Function(double progress)? onProgress,
   });
 

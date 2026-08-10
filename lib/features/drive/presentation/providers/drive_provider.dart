@@ -8,6 +8,7 @@ import '../../domain/entities/drive_file.dart';
 import '../../domain/entities/drive_folder.dart';
 import '../../domain/repositories/drive_repository.dart';
 import '../../data/repositories/drive_repository_impl.dart';
+import '../../../../core/constants/app_constants.dart';
 import '../../../../services/platform/native_telegram_channel.dart';
 
 // ─── Providers ────────────────────────────────────────────────────────────────
@@ -30,6 +31,14 @@ final uploadProvider =
 enum SortOption { newest, oldest, nameAZ, nameZA, sizeAsc, sizeDesc }
 
 enum ViewMode { grid, list }
+
+/// Case-insensitive name comparison so "apple.txt" doesn't sort after
+/// "Zebra.jpg". Falls back to the raw comparison for tie-breaking so results
+/// stay stable when names differ only in case.
+int _compareNamesAsc(DriveFile a, DriveFile b) {
+  final byName = a.name.toLowerCase().compareTo(b.name.toLowerCase());
+  return byName != 0 ? byName : a.name.compareTo(b.name);
+}
 
 class DriveState {
   final List<DriveFile> files;
@@ -80,9 +89,9 @@ class DriveState {
       case SortOption.oldest:
         result.sort((a, b) => a.uploadedAt.compareTo(b.uploadedAt));
       case SortOption.nameAZ:
-        result.sort((a, b) => a.name.compareTo(b.name));
+        result.sort(_compareNamesAsc);
       case SortOption.nameZA:
-        result.sort((a, b) => b.name.compareTo(a.name));
+        result.sort((a, b) => _compareNamesAsc(b, a));
       case SortOption.sizeAsc:
         result.sort((a, b) => a.size.compareTo(b.size));
       case SortOption.sizeDesc:
@@ -138,8 +147,9 @@ class DriveNotifier extends StateNotifier<DriveState> {
 
   Future<void> _loadViewPreference() async {
     final prefs = await SharedPreferences.getInstance();
-    final mode = prefs.getString('app_view_mode') ?? 'grid';
+    final mode = prefs.getString(StorageKeys.viewMode) ?? 'grid';
     final preferred = mode == 'list' ? ViewMode.list : ViewMode.grid;
+    if (!mounted) return;
     if (state.viewMode != preferred) state = state.copyWith(viewMode: preferred);
   }
 
@@ -189,6 +199,11 @@ class DriveNotifier extends StateNotifier<DriveState> {
     final next =
         state.viewMode == ViewMode.grid ? ViewMode.list : ViewMode.grid;
     state = state.copyWith(viewMode: next);
+    // Persist so the toolbar toggle survives restarts, matching the choice
+    // made in Settings → Default view.
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setString(StorageKeys.viewMode, next == ViewMode.list ? 'list' : 'grid');
+    });
   }
 
   void setSearchQuery(String query) {
@@ -293,11 +308,11 @@ class DriveNotifier extends StateNotifier<DriveState> {
   Future<void> importTelegramChannel(String chatId, String title) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final imported = prefs.getStringList('imported_folders') ?? [];
+      final imported = prefs.getStringList(StorageKeys.importedFolders) ?? [];
       final entry = '$chatId:$title';
       if (!imported.any((e) => e.startsWith('$chatId:'))) {
         imported.add(entry);
-        await prefs.setStringList('imported_folders', imported);
+        await prefs.setStringList(StorageKeys.importedFolders, imported);
       }
 
       // Check if already exists in state to avoid duplicate UI entries
@@ -321,10 +336,10 @@ class DriveNotifier extends StateNotifier<DriveState> {
     try {
       // If it's a custom/imported folder, also remove from imported list in SharedPreferences
       final prefs = await SharedPreferences.getInstance();
-      final imported = prefs.getStringList('imported_folders') ?? [];
+      final imported = prefs.getStringList(StorageKeys.importedFolders) ?? [];
       final updatedImported = imported.where((e) => !e.startsWith('${folder.id}:')).toList();
       if (imported.length != updatedImported.length) {
-        await prefs.setStringList('imported_folders', updatedImported);
+        await prefs.setStringList(StorageKeys.importedFolders, updatedImported);
       }
 
       await _repository.deleteFolder(folder);
@@ -333,10 +348,10 @@ class DriveNotifier extends StateNotifier<DriveState> {
     } catch (e) {
       // If native deletion fails but it was an imported folder, we still want to remove it locally from state and preferences!
       final prefs = await SharedPreferences.getInstance();
-      final imported = prefs.getStringList('imported_folders') ?? [];
+      final imported = prefs.getStringList(StorageKeys.importedFolders) ?? [];
       final updatedImported = imported.where((e) => !e.startsWith('${folder.id}:')).toList();
       if (imported.length != updatedImported.length) {
-        await prefs.setStringList('imported_folders', updatedImported);
+        await prefs.setStringList(StorageKeys.importedFolders, updatedImported);
         final updatedState = state.folders.where((f) => f.id != folder.id).toList();
         state = state.copyWith(folders: updatedState);
       } else {
@@ -505,7 +520,7 @@ class UploadNotifier extends StateNotifier<UploadState> {
   }) async {
     if (source == 'manual') {
       final prefs = await SharedPreferences.getInstance();
-      if (prefs.getBool('uploads_wifi_only') == true &&
+      if (prefs.getBool(PrefKeys.uploadsWifiOnly) == true &&
           !await NativeTelegramChannel.isOnWifi()) {
         throw StateError(
             'Wi-Fi-only uploads are enabled. Connect to Wi-Fi and retry.');
@@ -558,7 +573,7 @@ class UploadNotifier extends StateNotifier<UploadState> {
       {bool isError = false}) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      if (prefs.getBool('transfer_notifications') ?? true) {
+      if (prefs.getBool(PrefKeys.transferNotifications) ?? true) {
         await NativeTelegramChannel.showNotification(
           title: title,
           body: body,
@@ -676,15 +691,30 @@ class UploadNotifier extends StateNotifier<UploadState> {
   }
 
   void _updateTask(String taskId, {double? progress, bool? isComplete, bool? hasError, String? error, UploadStatus? status}) {
+    UploadTask? previous;
+    UploadTask? current;
     final updated = state.tasks.map((t) {
       if (t.id == taskId) {
-        return t.copyWith(progress: progress, isComplete: isComplete, hasError: hasError, error: error, status: status);
+        previous = t;
+        current = t.copyWith(progress: progress, isComplete: isComplete, hasError: hasError, error: error, status: status);
+        return current!;
       }
       return t;
     }).toList();
     state = UploadState(tasks: updated);
-    // Persist asynchronously without blocking UI
-    _persist();
+    // Only persist when the task meaningfully changes state. Progress-only
+    // updates arrive many times per second during uploads; writing the whole
+    // task list to SharedPreferences on each one thrashes disk I/O for entire
+    // multi-GB transfers. Completion/failure/retry transitions always persist
+    // immediately from their call sites or via this check.
+    final before = previous;
+    final after = current;
+    final meaningful = before == null ||
+        after == null ||
+        before.status != after.status ||
+        before.isComplete != after.isComplete ||
+        before.hasError != after.hasError;
+    if (meaningful) _persist();
   }
 
   void _removeTask(String taskId) {

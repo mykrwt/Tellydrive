@@ -111,7 +111,7 @@ class DriveRepositoryImpl implements DriveRepository {
 
     // Keep support for channels linked by older TeleDrive releases.
     final prefs = await SharedPreferences.getInstance();
-    for (final entry in prefs.getStringList('imported_folders') ?? const []) {
+    for (final entry in prefs.getStringList(StorageKeys.importedFolders) ?? const []) {
       final separator = entry.indexOf(':');
       if (separator <= 0) continue;
       final id = entry.substring(0, separator);
@@ -919,8 +919,8 @@ class DriveRepositoryImpl implements DriveRepository {
       chatId: int.parse(folder.telegramChannelId),
     );
     final prefs = await SharedPreferences.getInstance();
-    final imported = prefs.getStringList('imported_folders') ?? const [];
-    await prefs.setStringList('imported_folders',
+    final imported = prefs.getStringList(StorageKeys.importedFolders) ?? const [];
+    await prefs.setStringList(StorageKeys.importedFolders,
         imported.where((value) => !value.startsWith('${folder.id}:')).toList());
   }
 }

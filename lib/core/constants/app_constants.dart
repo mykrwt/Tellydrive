@@ -54,6 +54,10 @@ class StorageKeys {
 
   // Onboarding / permissions
   static const String onboardingCompleted = 'onboarding_completed';
+
+  /// Channels linked from Telegram by older TeleDrive releases (SharedPreferences
+  /// string list of 'chatId:title' entries).
+  static const String importedFolders = 'imported_folders';
 }
 
 /// SharedPreferences keys for user-controlled settings that are read directly

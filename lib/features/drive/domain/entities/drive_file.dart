@@ -1,4 +1,5 @@
 import '../../../../services/transfers/chunk_metadata.dart';
+import '../../../../services/vault/vault_metadata.dart';
 
 enum DriveFileType { image, video, audio, pdf, document, archive, other }
 
@@ -6,6 +7,9 @@ enum DriveFileType { image, video, audio, pdf, document, archive, other }
 ///
 /// A chunked file is represented by one DriveFile. Its internal Telegram
 /// documents live in [chunks] and never become separate UI entries.
+///
+/// A Hidden Vault file carries [vaultMetadata] parsed from its Telegram
+/// document caption and represents an encrypted `.tdvault` item.
 class DriveFile {
   final String id;
   final String telegramMessageId;
@@ -24,6 +28,7 @@ class DriveFile {
   final String? chunkUploadId;
   final List<DriveChunk> chunks;
   final List<String> telegramMessageIds;
+  final VaultMetadata? vaultMetadata;
 
   const DriveFile({
     required this.id,
@@ -43,9 +48,12 @@ class DriveFile {
     this.chunkUploadId,
     this.chunks = const [],
     this.telegramMessageIds = const [],
+    this.vaultMetadata,
   });
 
   bool get isChunked => chunkUploadId != null;
+
+  bool get isVaultFile => vaultMetadata != null;
 
   /// True if this is a chunked file that hasn't been fully uploaded.
   /// Covers: no chunks, missing indexes, non-contiguous parts.
@@ -83,6 +91,8 @@ class DriveFile {
     String? chunkUploadId,
     List<DriveChunk>? chunks,
     List<String>? telegramMessageIds,
+    VaultMetadata? vaultMetadata,
+    bool clearVaultMetadata = false,
   }) {
     return DriveFile(
       id: id ?? this.id,
@@ -102,6 +112,7 @@ class DriveFile {
       chunkUploadId: chunkUploadId ?? this.chunkUploadId,
       chunks: chunks ?? this.chunks,
       telegramMessageIds: telegramMessageIds ?? this.telegramMessageIds,
+      vaultMetadata: clearVaultMetadata ? null : vaultMetadata ?? this.vaultMetadata,
     );
   }
 }

@@ -16,6 +16,7 @@ import '../../../../core/constants/app_constants.dart';
 import '../../../../services/files/file_identification.dart';
 import '../../../../services/platform/native_telegram_channel.dart';
 import '../../../../services/transfers/chunk_metadata.dart';
+import '../../../../services/vault/vault_metadata.dart';
 
 /// Telegram/TDLib implementation retained from the upstream TeleDrive project.
 /// Large-file composition is layered above TDLib rather than replacing it.
@@ -183,8 +184,11 @@ class DriveRepositoryImpl implements DriveRepository {
       } else if (fileName.startsWith(_chunkPrefix) ||
           fileName.startsWith(_manifestPrefix) ||
           fileName.endsWith('.tdpart') ||
-          fileName.endsWith('.tdmanifest')) {
-        // Internal artifacts are intentionally never user-facing.
+          fileName.endsWith('.tdmanifest') ||
+          fileName.endsWith('.tdvault') ||
+          fileName.startsWith('TLB_VAULT_') ||
+          (map['caption']?.toString() ?? '').startsWith('TELEDRIVE_VAULT_V1:')) {
+        // Internal artifacts and encrypted Hidden Vault files are never user-facing in normal queries.
         continue;
       } else {
         // App identification: files are recognized instantly by fileName prefix
@@ -242,6 +246,48 @@ class DriveRepositoryImpl implements DriveRepository {
         chunkUploadId: metadata.uploadId,
         chunks: parts,
       ));
+    }
+    return visible;
+  }
+
+  @override
+  Future<List<DriveFile>> getVaultFiles({String? folderId}) async {
+    final resolvedFolder = folderId ?? savedMessagesId;
+    final chatId = await _chatIdFor(resolvedFolder);
+    if (chatId == 0) return [];
+    final raw = await NativeTelegramChannel.getDriveFiles(
+      chatId: chatId,
+      limit: AppConstants.telegramHistoryScanLimit,
+    );
+
+    final visible = <DriveFile>[];
+    for (final map in raw) {
+      final fileName = map['fileName']?.toString() ?? '';
+      final caption = map['caption']?.toString() ?? '';
+      if (fileName.endsWith('.tdvault') ||
+          fileName.startsWith('TLB_VAULT_') ||
+          caption.startsWith('TELEDRIVE_VAULT_V1:')) {
+        final meta = VaultMetadata.tryParseCaption(caption);
+        if (meta != null) {
+          final messageId = map['messageId']?.toString() ?? '0';
+          visible.add(DriveFile(
+            id: map['fileId']?.toString() ?? '0',
+            telegramMessageId: messageId,
+            telegramMessageIds: [messageId],
+            folderId: resolvedFolder,
+            name: meta.originalName,
+            type: _resolveType({'fileName': meta.originalName, 'mimeType': meta.mimeType}),
+            size: meta.originalSize,
+            uploadedAt: meta.uploadedAt,
+            localPath: (map['localPath'] ?? '').toString().isEmpty
+                ? null
+                : map['localPath'].toString(),
+            mimeType: meta.mimeType,
+            isDownloaded: map['isDownloadingCompleted'] == true,
+            vaultMetadata: meta,
+          ));
+        }
+      }
     }
     return visible;
   }
@@ -551,6 +597,41 @@ class DriveRepositoryImpl implements DriveRepository {
       localPath: localPath,
       mimeType: mimeType,
       isDownloaded: true,
+    );
+  }
+
+  @override
+  Future<DriveFile> uploadVaultFile({
+    required String localPath,
+    required String fileName,
+    required String folderId,
+    required VaultMetadata vaultMetadata,
+    void Function(double progress)? onProgress,
+  }) async {
+    final chatId = await _chatIdFor(folderId);
+    if (chatId == 0) throw ArgumentError('Invalid Telegram folder.');
+
+    final result = await _uploadTelegramDocument(
+      chatId: chatId,
+      path: localPath,
+      caption: vaultMetadata.toCaption(),
+      onProgress: onProgress,
+    );
+
+    final messageId = result['messageId']?.toString() ?? '0';
+    return DriveFile(
+      id: result['fileId']?.toString() ?? '0',
+      telegramMessageId: messageId,
+      telegramMessageIds: [messageId],
+      folderId: folderId,
+      name: vaultMetadata.originalName,
+      type: _resolveType({'fileName': vaultMetadata.originalName, 'mimeType': vaultMetadata.mimeType}),
+      size: vaultMetadata.originalSize,
+      uploadedAt: vaultMetadata.uploadedAt,
+      localPath: localPath,
+      mimeType: vaultMetadata.mimeType,
+      isDownloaded: true,
+      vaultMetadata: vaultMetadata,
     );
   }
 

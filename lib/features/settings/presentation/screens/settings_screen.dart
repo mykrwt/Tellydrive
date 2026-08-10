@@ -8,7 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/routing/app_router.dart';
-import '../../../../services/files/file_utils.dart';
+import '../../../../core/utils/file_utils.dart';
 import '../../../../services/platform/native_telegram_channel.dart';
 import '../../../../services/security/app_lock_service.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';

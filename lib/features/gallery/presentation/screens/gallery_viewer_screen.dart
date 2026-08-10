@@ -213,12 +213,21 @@ class _VideoPageState extends State<_VideoPage> {
     super.initState();
     _controller = VideoPlayerController.file(File(widget.path));
     _initialize = _controller.initialize().then((_) async {
+      if (!mounted) return;
       final prefs = await SharedPreferences.getInstance();
       if (prefs.getBool(PrefKeys.galleryAutoplay) ?? true) {
         await _controller.play();
       }
       if (mounted) setState(() {});
     });
+  }
+
+  @override
+  void deactivate() {
+    // PageView keeps swiped-away pages alive one slot past the viewport —
+    // without this the previous video keeps playing sound in the background.
+    if (_controller.value.isPlaying) _controller.pause();
+    super.deactivate();
   }
 
   @override

@@ -19,6 +19,10 @@ class _VideoPreviewScreenState extends ConsumerState<VideoPreviewScreen> {
   VideoPlayerController? _vpController;
   ChewieController? _chewieController;
   bool _isDownloading = false;
+  // build() can schedule _initPlayer from a post-frame callback on every
+  // rebuild while no controller exists yet — guard against concurrent inits
+  // leaking extra VideoPlayerControllers.
+  bool _initializing = false;
   String? _downloadedPath;
 
   Future<void> _download() async {
@@ -64,21 +68,27 @@ class _VideoPreviewScreenState extends ConsumerState<VideoPreviewScreen> {
   }
 
   Future<void> _initPlayer(String path) async {
+    if (_initializing) return;
     if (path.isEmpty || !File(path).existsSync()) return;
-    _chewieController?.dispose();
-    _vpController?.dispose();
-    final vp = VideoPlayerController.file(File(path));
-    await vp.initialize();
-    if (!mounted) {
-      vp.dispose();
-      return;
+    _initializing = true;
+    try {
+      _chewieController?.dispose();
+      _vpController?.dispose();
+      final vp = VideoPlayerController.file(File(path));
+      await vp.initialize();
+      if (!mounted) {
+        vp.dispose();
+        return;
+      }
+      final chewie = ChewieController(
+          videoPlayerController: vp, autoPlay: false, looping: false);
+      setState(() {
+        _vpController = vp;
+        _chewieController = chewie;
+      });
+    } finally {
+      _initializing = false;
     }
-    final chewie = ChewieController(
-        videoPlayerController: vp, autoPlay: false, looping: false);
-    setState(() {
-      _vpController = vp;
-      _chewieController = chewie;
-    });
   }
 
   @override

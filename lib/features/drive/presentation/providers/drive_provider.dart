@@ -34,8 +34,8 @@ enum ViewMode { grid, list }
 
 /// Case-insensitive name comparison so "apple.txt" doesn't sort after
 /// "Zebra.jpg". Falls back to the raw comparison for tie-breaking so results
-/// stay stable when names differ only in case.
-int _compareNamesAsc(DriveFile a, DriveFile b) {
+/// stay stable when names differ only in case. Shared with the search screen.
+int compareFileNamesAsc(DriveFile a, DriveFile b) {
   final byName = a.name.toLowerCase().compareTo(b.name.toLowerCase());
   return byName != 0 ? byName : a.name.compareTo(b.name);
 }
@@ -89,9 +89,9 @@ class DriveState {
       case SortOption.oldest:
         result.sort((a, b) => a.uploadedAt.compareTo(b.uploadedAt));
       case SortOption.nameAZ:
-        result.sort(_compareNamesAsc);
+        result.sort(compareFileNamesAsc);
       case SortOption.nameZA:
-        result.sort((a, b) => _compareNamesAsc(b, a));
+        result.sort((a, b) => compareFileNamesAsc(b, a));
       case SortOption.sizeAsc:
         result.sort((a, b) => a.size.compareTo(b.size));
       case SortOption.sizeDesc:

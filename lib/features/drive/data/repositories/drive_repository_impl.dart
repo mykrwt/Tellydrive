@@ -245,6 +245,7 @@ class DriveRepositoryImpl implements DriveRepository {
         mimeType: metadata.mimeType,
         chunkUploadId: metadata.uploadId,
         chunks: parts,
+        expectedChunkCount: metadata.chunkCount,
       ));
     }
     return visible;
@@ -356,6 +357,11 @@ class DriveRepositoryImpl implements DriveRepository {
       file.chunkUploadId!,
     ));
     await directory.create(recursive: true);
+    // Housekeeping: reconstructed copies of chunked downloads would otherwise
+    // pile up in app support forever since nothing else tracks them. Prune
+    // stale per-upload directories (not the one about to be used) in the
+    // background so storage stays bounded.
+    unawaited(_pruneStaleReconstructions(support, keepUploadId: file.chunkUploadId!));
     final output = File(p.join(directory.path, _safeFileName(file.name)));
     if (await output.exists() && await output.length() == file.size) {
       onProgress?.call(1);
@@ -413,6 +419,30 @@ class DriveRepositoryImpl implements DriveRepository {
   }
 
   String _safeFileName(String name) => name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+
+  /// Deletes reconstructed-output directories older than 24 h, keeping the
+  /// one currently in use. Fire-and-forget housekeeping so chunked downloads
+  /// can't grow the app-support directory without bound.
+  Future<void> _pruneStaleReconstructions(
+    Directory support, {
+    required String keepUploadId,
+  }) async {
+    try {
+      final root = Directory(p.join(support.path, 'reconstructed'));
+      if (!await root.exists()) return;
+      final cutoff = DateTime.now().subtract(const Duration(hours: 24));
+      await for (final entity in root.list(followLinks: false)) {
+        if (entity is! Directory) continue;
+        if (p.basename(entity.path) == keepUploadId) continue;
+        try {
+          final stat = await entity.stat();
+          if (stat.modified.isBefore(cutoff)) {
+            await entity.delete(recursive: true);
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
 
   Future<File> _writeChunk(
       RandomAccessFile input, Directory directory, String uploadId,
@@ -772,6 +802,7 @@ class DriveRepositoryImpl implements DriveRepository {
       isDownloaded: true,
       chunkUploadId: uploadId,
       chunks: chunks,
+      expectedChunkCount: chunkCount,
     );
   }
 

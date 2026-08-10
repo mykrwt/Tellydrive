@@ -9,8 +9,6 @@ import '../widgets/search_result_item.dart';
 
 final searchQueryProvider = StateProvider<String>((ref) => '');
 final searchFilterProvider = StateProvider<DriveFileType?>((ref) => null);
-final searchSortProvider =
-    StateProvider<SortOption>((ref) => SortOption.newest);
 
 class SearchScreen extends ConsumerStatefulWidget {
   const SearchScreen({super.key});
@@ -31,30 +29,17 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   List<DriveFile> _getResults() {
     final query = ref.watch(searchQueryProvider).toLowerCase();
     final filter = ref.watch(searchFilterProvider);
-    final sort = ref.watch(searchSortProvider);
     final allFiles = ref.watch(driveProvider).files;
 
-    var results = allFiles.where((f) {
+    final results = allFiles.where((f) {
       final matchesQuery =
           query.isEmpty || f.name.toLowerCase().contains(query);
       final matchesFilter = filter == null || f.type == filter;
       return matchesQuery && matchesFilter;
     }).toList();
 
-    switch (sort) {
-      case SortOption.newest:
-        results.sort((a, b) => b.uploadedAt.compareTo(a.uploadedAt));
-      case SortOption.oldest:
-        results.sort((a, b) => a.uploadedAt.compareTo(b.uploadedAt));
-      case SortOption.nameAZ:
-        results.sort((a, b) => a.name.compareTo(b.name));
-      case SortOption.nameZA:
-        results.sort((a, b) => b.name.compareTo(a.name));
-      case SortOption.sizeDesc:
-        results.sort((a, b) => b.size.compareTo(a.size));
-      case SortOption.sizeAsc:
-        results.sort((a, b) => a.size.compareTo(b.size));
-    }
+    // Newest first — the screen has no sort picker, so this is the only order.
+    results.sort((a, b) => b.uploadedAt.compareTo(a.uploadedAt));
     return results;
   }
 

@@ -256,27 +256,53 @@ class _GalleryScreenState extends ConsumerState<GalleryScreen> {
     );
   }
 
-  Timer? _scrollHoldTimer;
+  // Pull-down-and-hold opens the Hidden Vault: pull past the refresh distance
+  // and keep holding for a moment. Works with any number of photos — including
+  // zero — because the scrollables use AlwaysScrollableScrollPhysics.
+  double _pullAccum = 0;
+  Timer? _pullHoldTimer;
+  static const _vaultPullDistance = 130.0;
+  static const _vaultHoldDuration = Duration(milliseconds: 650);
 
-  void _checkScrollVaultTrigger(ScrollMetrics metrics) {
-    if (metrics.maxScrollExtent > 0 &&
-        metrics.pixels >= metrics.maxScrollExtent - 10) {
-      if (_scrollHoldTimer == null && !_vaultLoginOpen) {
-        _scrollHoldTimer = Timer(const Duration(milliseconds: 2000), () {
-          _scrollHoldTimer = null;
-          HapticFeedback.heavyImpact();
-          _openVaultLogin(context);
-        });
+  void _cancelPullHold() {
+    _pullHoldTimer?.cancel();
+    _pullHoldTimer = null;
+  }
+
+  void _handleScrollNotification(ScrollNotification notification) {
+    if (notification is ScrollStartNotification) {
+      // Start tracking only if the finger grabbed the list at the very top.
+      _pullAccum = 0;
+      _cancelPullHold();
+    } else if (notification is ScrollUpdateNotification) {
+      final details = notification.dragDetails;
+      final atTop = notification.metrics.extentBefore <= 0 &&
+          notification.metrics.pixels <= 0;
+      if (details != null && atTop && details.delta.dy > 0) {
+        _pullAccum += details.delta.dy;
+        if (_pullAccum >= _vaultPullDistance && _pullHoldTimer == null) {
+          _pullHoldTimer = Timer(_vaultHoldDuration, () {
+            _pullHoldTimer = null;
+            if (!_vaultLoginOpen) {
+              HapticFeedback.heavyImpact();
+              _openVaultLogin(context);
+            }
+          });
+        } else if (_pullAccum < _vaultPullDistance) {
+          // Finger reversed direction before passing the threshold — disarm.
+          _cancelPullHold();
+        }
       }
-    } else {
-      _scrollHoldTimer?.cancel();
-      _scrollHoldTimer = null;
+    } else if (notification is ScrollEndNotification) {
+      // Finger lifted (this also lets RefreshIndicator do a normal refresh).
+      _pullAccum = 0;
+      _cancelPullHold();
     }
   }
 
   @override
   void dispose() {
-    _scrollHoldTimer?.cancel();
+    _cancelPullHold();
     _hintTimer?.cancel();
     super.dispose();
   }
@@ -319,7 +345,7 @@ class _GalleryScreenState extends ConsumerState<GalleryScreen> {
       ),
       body: NotificationListener<ScrollNotification>(
         onNotification: (notification) {
-          _checkScrollVaultTrigger(notification.metrics);
+          _handleScrollNotification(notification);
           return false;
         },
         child: Stack(
@@ -452,6 +478,9 @@ class _AnimatedGrid extends StatelessWidget {
         // reflows smoothly; the integer column count tracks it automatically.
         final extent = (screenWidth / columns).clamp(48.0, screenWidth / 1.5);
         return CustomScrollView(
+          // Always-scrollable so pull-to-refresh (and the pull-and-hold vault
+          // trigger) work even when there are too few photos to fill the screen.
+          physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
             for (final group in groups.entries) ...[
               SliverToBoxAdapter(
@@ -523,6 +552,9 @@ class _MessageState extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return ListView(
+      // Must stay scrollable so the enclosing RefreshIndicator can always be
+      // pulled, even for measured states that don't fill the viewport.
+      physics: const AlwaysScrollableScrollPhysics(),
       children: [
         const SizedBox(height: 150),
         Icon(icon, size: 56, color: theme.colorScheme.onSurfaceVariant),
@@ -703,14 +735,13 @@ class _VaultTriggerAreaState extends State<_VaultTriggerArea> {
 
   @override
   Widget build(BuildContext context) {
+    // Deliberate long-press only — a plain sustained touch (started via
+    // onTapDown previously) must not wander into the Hidden Vault.
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onLongPressStart: (_) => _startTimer(),
       onLongPressEnd: (_) => _cancelTimer(),
       onLongPressCancel: () => _cancelTimer(),
-      onTapDown: (_) => _startTimer(),
-      onTapUp: (_) => _cancelTimer(),
-      onTapCancel: () => _cancelTimer(),
       child: widget.child,
     );
   }

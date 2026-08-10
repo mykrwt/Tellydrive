@@ -131,6 +131,9 @@ class AutoBackupNotifier extends StateNotifier<AutoBackupState> {
     }
     final lastAtMs = prefs.getInt(PrefKeys.autoBackupLastAt);
     final freqIndex = prefs.getInt(PrefKeys.autoBackupFrequency);
+    // The provider may have been disposed (e.g. quick logout) while we were
+    // awaiting SharedPreferences — writing state then would throw.
+    if (_disposed) return;
     state = state.copyWith(
       enabled: prefs.getBool(PrefKeys.autoBackupEnabled) ?? false,
       wifiOnly: prefs.getBool(PrefKeys.autoBackupWifiOnly) ?? true,
@@ -229,11 +232,10 @@ class AutoBackupNotifier extends StateNotifier<AutoBackupState> {
   }
 
   Future<void> toggleRule(String ruleId) async {
-    await updateRule(
-      state.rules
-          .firstWhere((r) => r.id == ruleId)
-          .copyWith(enabled: !(state.rules.firstWhere((r) => r.id == ruleId).enabled)),
-    );
+    final index = state.rules.indexWhere((r) => r.id == ruleId);
+    if (index < 0) return;
+    final rule = state.rules[index];
+    await updateRule(rule.copyWith(enabled: !rule.enabled));
   }
 
   Future<void> deleteRule(String ruleId) async {
@@ -248,6 +250,21 @@ class AutoBackupNotifier extends StateNotifier<AutoBackupState> {
       PrefKeys.autoBackupRules,
       state.rules.map((r) => r.encode()).toList(),
     );
+  }
+
+  /// Upper bound for the dedupe fingerprint registry. Without a cap the
+  /// SharedPreferences string list grows with every backed-up file forever.
+  static const int maxSeenFingerprints = 10000;
+
+  /// Persists the seen-fingerprint registry, dropping the oldest entries when
+  /// it exceeds [maxSeenFingerprints] (iteration order is insertion order, so
+  /// the tail holds the newest fingerprints).
+  Future<void> _persistSeen(SharedPreferences prefs, Set<String> seen) {
+    var list = seen.toList();
+    if (list.length > maxSeenFingerprints) {
+      list = list.sublist(list.length - maxSeenFingerprints);
+    }
+    return prefs.setStringList(PrefKeys.autoBackupSeen, list);
   }
 
   // ── Scheduling ───────────────────────────────────────────────────────────
@@ -360,8 +377,7 @@ class AutoBackupNotifier extends StateNotifier<AutoBackupState> {
           uploaded++;
           // Persist dedupe state progressively so an interrupted pass still
           // records what completed — duplicate prevention survives restarts.
-          await prefs.setStringList(
-              PrefKeys.autoBackupSeen, seen.toList());
+          await _persistSeen(prefs, seen);
           state = state.copyWith(
             lastBackupAt: DateTime.now(),
             pendingCount: pending.length - uploaded,

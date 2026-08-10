@@ -27,6 +27,11 @@ class DriveFile {
   final double uploadProgress;
   final String? chunkUploadId;
   final List<DriveChunk> chunks;
+
+  /// Chunk count recorded in the upload manifest. Used to detect chunked
+  /// files whose parts were removed from Telegram afterwards — a contiguous
+  /// run of indexes alone can't tell "all 5/5 chunks" from "3/5, rest gone".
+  final int? expectedChunkCount;
   final List<String> telegramMessageIds;
   final VaultMetadata? vaultMetadata;
 
@@ -47,6 +52,7 @@ class DriveFile {
     this.uploadProgress = 0,
     this.chunkUploadId,
     this.chunks = const [],
+    this.expectedChunkCount,
     this.telegramMessageIds = const [],
     this.vaultMetadata,
   });
@@ -56,10 +62,14 @@ class DriveFile {
   bool get isVaultFile => vaultMetadata != null;
 
   /// True if this is a chunked file that hasn't been fully uploaded.
-  /// Covers: no chunks, missing indexes, non-contiguous parts.
+  /// Covers: no chunks, missing indexes, non-contiguous parts, and parts
+  /// missing relative to the count recorded in the upload manifest.
   bool get isIncomplete {
     if (!isChunked) return false;
     if (chunks.isEmpty) return true;
+    if (expectedChunkCount != null && chunks.length != expectedChunkCount) {
+      return true;
+    }
     final sorted = [...chunks]..sort((a, b) => a.index.compareTo(b.index));
     for (var i = 0; i < sorted.length; i++) {
       if (sorted[i].index != i) return true;
@@ -90,6 +100,7 @@ class DriveFile {
     double? uploadProgress,
     String? chunkUploadId,
     List<DriveChunk>? chunks,
+    int? expectedChunkCount,
     List<String>? telegramMessageIds,
     VaultMetadata? vaultMetadata,
     bool clearVaultMetadata = false,
@@ -111,6 +122,7 @@ class DriveFile {
       uploadProgress: uploadProgress ?? this.uploadProgress,
       chunkUploadId: chunkUploadId ?? this.chunkUploadId,
       chunks: chunks ?? this.chunks,
+      expectedChunkCount: expectedChunkCount ?? this.expectedChunkCount,
       telegramMessageIds: telegramMessageIds ?? this.telegramMessageIds,
       vaultMetadata: clearVaultMetadata ? null : vaultMetadata ?? this.vaultMetadata,
     );

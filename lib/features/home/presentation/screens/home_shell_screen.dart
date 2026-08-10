@@ -29,6 +29,10 @@ class _HomeShellScreenState extends ConsumerState<HomeShellScreen>
   // App lock state.
   bool _lockEnabled = false;
   bool _locked = false;
+  // Re-entrancy guard: init, resume, and the manual Unlock button can all
+  // trigger an auth prompt; local_auth throws if a second prompt starts while
+  // one is active, which would falsely keep the app locked.
+  bool _unlocking = false;
 
   static const _pages = <Widget>[
     GalleryScreen(),
@@ -63,9 +67,15 @@ class _HomeShellScreenState extends ConsumerState<HomeShellScreen>
   }
 
   Future<void> _tryUnlock() async {
-    final ok = await AppLockService.instance.authenticate(reason: 'Unlock TeleDrive');
-    if (!mounted) return;
-    setState(() => _locked = !ok);
+    if (_unlocking) return;
+    _unlocking = true;
+    try {
+      final ok = await AppLockService.instance.authenticate(reason: 'Unlock TeleDrive');
+      if (!mounted) return;
+      setState(() => _locked = !ok);
+    } finally {
+      _unlocking = false;
+    }
   }
 
   @override

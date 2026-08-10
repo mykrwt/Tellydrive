@@ -56,8 +56,11 @@ class _TeleDriveAppState extends ConsumerState<TeleDriveApp> {
       builder: (context, child) {
         final brightness = Theme.of(context).brightness;
 
-        SystemChrome.setSystemUIOverlayStyle(
-          SystemUiOverlayStyle(
+        // Declarative overlay style: AnnotatedRegion updates the system bars
+        // only when the value actually changes, unlike calling the imperative
+        // SystemChrome API as a side effect on every rebuild.
+        return AnnotatedRegion<SystemUiOverlayStyle>(
+          value: SystemUiOverlayStyle(
             statusBarColor: Colors.transparent,
             statusBarIconBrightness: brightness == Brightness.dark
                 ? Brightness.light
@@ -67,9 +70,8 @@ class _TeleDriveAppState extends ConsumerState<TeleDriveApp> {
                 ? Brightness.light
                 : Brightness.dark,
           ),
+          child: child ?? const SizedBox.shrink(),
         );
-
-        return child ?? const SizedBox.shrink();
       },
     );
   }

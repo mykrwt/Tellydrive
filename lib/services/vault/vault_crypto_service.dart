@@ -87,10 +87,19 @@ class VaultCryptoService {
   }
 
   /// True if [candidateVaultKey] matches [expectedTagBase64].
+  ///
+  /// Compares the raw tag bytes in constant time so a wrong-PIN rejection
+  /// doesn't leak how many leading bytes matched (timing side channel).
   bool verifyVaultKey(List<int> candidateVaultKey, String expectedTagBase64) {
     try {
-      final computed = computeVerifyTag(candidateVaultKey);
-      return computed == expectedTagBase64;
+      final computed = base64Decode(computeVerifyTag(candidateVaultKey));
+      final expected = base64Decode(expectedTagBase64);
+      if (computed.length != expected.length) return false;
+      var difference = 0;
+      for (var i = 0; i < computed.length; i++) {
+        difference |= computed[i] ^ expected[i];
+      }
+      return difference == 0;
     } catch (_) {
       return false;
     }

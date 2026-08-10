@@ -34,7 +34,15 @@ class GalleryNotifier extends StateNotifier<GalleryState> {
 
   final Ref _ref;
 
+  // Refresh scans every folder's Telegram history, so it's the most expensive
+  // operation in the app. The Files screen listens to upload completions and
+  // calls refresh() once per finished task — batch-uploading 10 photos would
+  // otherwise trigger 10 overlapping full scans. Collapse concurrent calls.
+  bool _refreshing = false;
+
   Future<void> refresh() async {
+    if (_refreshing) return;
+    _refreshing = true;
     state = state.copyWith(isLoading: true, clearError: true);
     try {
       final repository = _ref.read(driveRepositoryProvider);
@@ -49,15 +57,20 @@ class GalleryNotifier extends StateNotifier<GalleryState> {
               file.type == DriveFileType.video)
           .toList()
         ..sort((a, b) => b.uploadedAt.compareTo(a.uploadedAt));
+      if (!mounted) return;
       state = GalleryState(media: media);
     } catch (error) {
+      if (!mounted) return;
       state = state.copyWith(isLoading: false, error: error.toString());
+    } finally {
+      _refreshing = false;
     }
   }
 
   Future<void> delete(List<DriveFile> files) async {
     if (files.isEmpty) return;
     await _ref.read(driveRepositoryProvider).deleteFiles(files);
+    if (!mounted) return;
     final removed = files.map((file) => '${file.folderId}:${file.id}').toSet();
     state = state.copyWith(
       media: state.media

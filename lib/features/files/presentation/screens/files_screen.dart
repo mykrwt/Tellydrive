@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../../core/constants/app_constants.dart';
 import '../../../../core/utils/file_utils.dart';
 import '../../../../services/files/file_action_service.dart';
 import '../../../drive/domain/entities/drive_file.dart';
@@ -247,7 +248,7 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
 
   Future<bool> _confirm(String title, String message) async {
     final prefs = await SharedPreferences.getInstance();
-    if (!(prefs.getBool('confirm_before_delete') ?? true)) return true;
+    if (!(prefs.getBool(PrefKeys.confirmBeforeDelete) ?? true)) return true;
     return await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(

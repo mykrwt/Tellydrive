@@ -6,9 +6,10 @@ import 'package:photo_view/photo_view.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../../../core/constants/app_constants.dart';
+import '../../../../services/files/file_action_service.dart';
 import '../../../drive/domain/entities/drive_file.dart';
 import '../../../drive/presentation/providers/drive_provider.dart';
-import '../../../../services/files/file_action_service.dart';
 import '../providers/gallery_provider.dart';
 
 class GalleryViewerScreen extends ConsumerStatefulWidget {
@@ -35,7 +36,10 @@ class _GalleryViewerScreenState extends ConsumerState<GalleryViewerScreen> {
   void initState() {
     super.initState();
     _media = List.of(widget.media);
-    _index = widget.initialIndex.clamp(0, _media.length - 1) as int;
+    // Guard against an empty list: clamp(0, -1) would throw.
+    _index = _media.isEmpty
+        ? 0
+        : widget.initialIndex.clamp(0, _media.length - 1) as int;
     _controller = PageController(initialPage: _index);
   }
 
@@ -209,12 +213,21 @@ class _VideoPageState extends State<_VideoPage> {
     super.initState();
     _controller = VideoPlayerController.file(File(widget.path));
     _initialize = _controller.initialize().then((_) async {
+      if (!mounted) return;
       final prefs = await SharedPreferences.getInstance();
-      if (prefs.getBool('gallery_autoplay') ?? true) {
+      if (prefs.getBool(PrefKeys.galleryAutoplay) ?? true) {
         await _controller.play();
       }
       if (mounted) setState(() {});
     });
+  }
+
+  @override
+  void deactivate() {
+    // PageView keeps swiped-away pages alive one slot past the viewport —
+    // without this the previous video keeps playing sound in the background.
+    if (_controller.value.isPlaying) _controller.pause();
+    super.deactivate();
   }
 
   @override

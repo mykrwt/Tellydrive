@@ -9,7 +9,9 @@ import 'package:uuid/uuid.dart';
 import '../../../../services/vault/vault_crypto_service.dart';
 import '../../../../services/vault/vault_metadata.dart';
 import '../../../../services/vault/vault_service.dart';
+import '../../../drive/data/repositories/drive_repository_impl.dart';
 import '../../../drive/domain/entities/drive_file.dart';
+import '../../../drive/domain/repositories/drive_repository.dart';
 import '../../../drive/presentation/providers/drive_provider.dart';
 import '../../../gallery/presentation/providers/gallery_provider.dart';
 
@@ -247,11 +249,71 @@ class VaultNotifier extends StateNotifier<VaultState> {
     }
   }
 
+  /// Encrypts and uploads a single local file as a `.tdvault` document.
+  /// Caller is responsible for refreshing state afterwards — this keeps batch
+  /// operations from triggering one full Telegram scan per file.
+  Future<void> _encryptAndUploadOne({
+    required String localPath,
+    required String folderId,
+    required DriveRepository repository,
+    required Map<String, String> config,
+    void Function(double progress)? onProgress,
+  }) async {
+    final source = File(localPath);
+    if (!await source.exists()) return;
+
+    final originalName = p.basename(localPath);
+    final originalSize = await source.length();
+    final mimeType =
+        lookupMimeType(originalName) ?? 'application/octet-stream';
+    final uploadId = const Uuid().v4();
+    final mediaIv = VaultCryptoService.instance.generateNonce();
+
+    // Step 1: Local encryption BEFORE Telegram upload.
+    final encryptedFile = await VaultService.instance.encryptToVaultFile(
+      localPath: localPath,
+      uploadId: uploadId,
+      vaultKey: state.unlockedKey!,
+      mediaIv: mediaIv,
+      onProgress: (val) => onProgress?.call(val * 0.5),
+    );
+
+    final metadata = VaultMetadata(
+      version: 1,
+      uploadId: uploadId,
+      originalName: originalName,
+      originalSize: originalSize,
+      mimeType: mimeType,
+      salt: config['salt']!,
+      wrappedKey: config['wrappedKey']!,
+      wrapIv: config['wrapIv']!,
+      mediaIv: base64Encode(mediaIv),
+      verifyTag: config['verifyTag']!,
+      uploadedAt: DateTime.now(),
+    );
+
+    try {
+      // Step 2: Upload ONLY the encrypted file to Telegram.
+      await repository.uploadVaultFile(
+        localPath: encryptedFile.path,
+        fileName: encryptedFile.path,
+        folderId: folderId,
+        vaultMetadata: metadata,
+        onProgress: (val) => onProgress?.call(0.5 + val * 0.5),
+      );
+    } finally {
+      // Step 3: Delete the temporary encrypted file from disk.
+      if (await encryptedFile.exists()) {
+        await encryptedFile.delete();
+      }
+    }
+  }
+
   /// Encrypts local media files BEFORE uploading them to Telegram as `.tdvault`
   /// files with full recovery metadata in their document captions.
   Future<void> uploadMediaToVault(
     List<String> localPaths, {
-    String folderId = 'saved_messages',
+    String folderId = DriveRepositoryImpl.savedMessagesId,
     void Function(double progress)? onProgress,
   }) async {
     if (!state.isUnlocked || state.unlockedKey == null) {
@@ -265,59 +327,14 @@ class VaultNotifier extends StateNotifier<VaultState> {
     final repository = _ref.read(driveRepositoryProvider);
     final total = localPaths.length;
     for (var i = 0; i < total; i++) {
-      final localPath = localPaths[i];
-      final source = File(localPath);
-      if (!await source.exists()) continue;
-
-      final originalName = p.basename(localPath);
-      final originalSize = await source.length();
-      final mimeType =
-          lookupMimeType(originalName) ?? 'application/octet-stream';
-      final uploadId = const Uuid().v4();
-      final mediaIv = VaultCryptoService.instance.generateNonce();
-
-      // Step 1: Local encryption BEFORE Telegram upload.
-      final encryptedFile = await VaultService.instance.encryptToVaultFile(
-        localPath: localPath,
-        uploadId: uploadId,
-        vaultKey: state.unlockedKey!,
-        mediaIv: mediaIv,
-        onProgress: (val) {
-          onProgress?.call((i + val * 0.5) / total);
-        },
+      final index = i;
+      await _encryptAndUploadOne(
+        localPath: localPaths[i],
+        folderId: folderId,
+        repository: repository,
+        config: config,
+        onProgress: (val) => onProgress?.call((index + val) / total),
       );
-
-      final metadata = VaultMetadata(
-        version: 1,
-        uploadId: uploadId,
-        originalName: originalName,
-        originalSize: originalSize,
-        mimeType: mimeType,
-        salt: config['salt']!,
-        wrappedKey: config['wrappedKey']!,
-        wrapIv: config['wrapIv']!,
-        mediaIv: base64Encode(mediaIv),
-        verifyTag: config['verifyTag']!,
-        uploadedAt: DateTime.now(),
-      );
-
-      try {
-        // Step 2: Upload ONLY the encrypted file to Telegram.
-        await repository.uploadVaultFile(
-          localPath: encryptedFile.path,
-          fileName: encryptedFile.path,
-          folderId: folderId,
-          vaultMetadata: metadata,
-          onProgress: (val) {
-            onProgress?.call((i + 0.5 + val * 0.5) / total);
-          },
-        );
-      } finally {
-        // Step 3: Delete the temporary encrypted file from disk.
-        if (await encryptedFile.exists()) {
-          await encryptedFile.delete();
-        }
-      }
     }
 
     onProgress?.call(1.0);
@@ -336,16 +353,30 @@ class VaultNotifier extends StateNotifier<VaultState> {
     if (!state.isUnlocked || state.unlockedKey == null) {
       throw StateError('Vault must be unlocked.');
     }
+    final config = await VaultService.instance.readLocalVaultConfig();
+    if (config == null) {
+      throw StateError('Vault recovery configuration is missing.');
+    }
     final repository = _ref.read(driveRepositoryProvider);
-    for (var i = 0; i < galleryFiles.length; i++) {
+    final total = galleryFiles.length;
+    for (var i = 0; i < total; i++) {
       final file = galleryFiles[i];
       var localPath = file.localPath;
       if (localPath == null || localPath.isEmpty || !await File(localPath).exists()) {
         localPath = await repository.downloadFile(file: file);
       }
-      await uploadMediaToVault([localPath], folderId: file.folderId);
+      final index = i;
+      await _encryptAndUploadOne(
+        localPath: localPath,
+        folderId: file.folderId,
+        repository: repository,
+        config: config,
+        onProgress: (val) => onProgress?.call((index + val) / total),
+      );
+      // Delete the original right after its encrypted copy landed so an
+      // interrupted batch can't leave the same photo in both places.
+      await repository.deleteFile(file);
     }
-    await repository.deleteFiles(galleryFiles);
     await refresh();
     _ref.read(galleryProvider.notifier).refresh();
   }
@@ -361,7 +392,7 @@ class VaultNotifier extends StateNotifier<VaultState> {
       await repository.uploadFile(
         localPath: decryptedPath,
         fileName: file.name,
-        folderId: 'saved_messages',
+        folderId: DriveRepositoryImpl.savedMessagesId,
       );
     }
     await repository.deleteFiles(vaultFiles);

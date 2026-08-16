@@ -1,98 +1,379 @@
-# TeleDrive Gallery & Files
+# TeleDrive — Gallery & Files
 
-An Android Flutter application that uses a Telegram account as its storage layer. This project is built directly on the native TDLib architecture from [`ali-abdollahzadeh/teledrive`](https://github.com/ali-abdollahzadeh/teledrive): the existing authentication, persistent TDLib session, Saved Messages/channel discovery, upload, download, deletion, and cache behavior remain the backend foundation.
+A modern Android Flutter application that turns Telegram into a personal storage layer through native TDLib integration.
 
-No S3, Firebase, Google Drive, Dropbox, or secondary cloud-storage backend is used.
+TeleDrive provides a unified interface for managing photos, videos, documents, folders, backups, downloads, and Telegram-backed files — without relying on S3, Firebase, Google Drive, Dropbox, or another secondary cloud-storage backend.
 
-## Application structure
+---
 
-The authenticated app has exactly three bottom destinations:
+## Features
 
-- **Gallery** — date-grouped Telegram image/video grid with smooth, continuous pinch-to-zoom (2–8 columns), full-screen photo/video viewer; selection, deletion, download, and sharing.
-- **Files** — Telegram storage folders and their real files only; integrated search/sort, list/grid modes, thumbnails/type icons, multi-select, rename, delete, move, copy, download, share, upload, and private-channel folder creation.
-- **Settings** — account, Auto Backup, downloads & storage, gallery, files, notifications, privacy & security (biometric app lock), local FTP access, appearance, and app information.
+### Gallery
 
-Internal chunk and manifest documents are filtered in the repository layer, so they cannot appear in Gallery, Files, search, or FTP listings.
+A fast, gallery-first experience for your Telegram media.
 
-## Auto Backup
+* Date-grouped photo and video grid
+* Smooth continuous pinch-to-zoom
+* Adjustable grid density from **2–8 columns**
+* Full-screen photo and video viewer
+* Multi-selection
+* Delete, download, and share
+* Automatic filtering of internal storage data
 
-Settings → Auto Backup maps local phone folders to specific Telegram destinations. Each rule pairs a watched folder with a drive folder (Saved Messages or a channel), and new files in that folder are uploaded to its destination on a schedule. Rules can be added, edited, enabled/disabled, and removed independently.
+Gallery displays only user-facing media. Internal chunk and manifest documents are hidden at the repository layer and therefore never appear in Gallery, Files, search, or FTP listings.
 
-Behaviour:
+### Files
 
-- A monitor scans every enabled rule's folder on a configurable frequency and when the app returns to the foreground; files already backed up (fingerprinted by path + size + modified time) are skipped, so nothing is re-uploaded.
-- Each upload reuses the existing resumable chunked upload pipeline and preserves the original filename; progress appears in the upload strip.
-- Constraints are enforced before and during a pass: Wi-Fi only, allow mobile data, and charging only.
-- Status (last backup time, pending count, last error) is shown in Settings and on the Auto Backup screen.
-- Completion and failure optionally post an Android notification.
+A complete file manager for Telegram-backed storage.
 
-Folder access uses Android's directory picker. Folders the OS does not allow the app to read are reported with a clear message rather than failing silently. True background scanning relies on the in-app monitor plus foreground resume; reliable background operation requires the battery-optimization exemption granted during onboarding.
+* Saved Messages and private Telegram channels
+* Folder navigation
+* Search and sorting
+* List and grid layouts
+* File thumbnails and type icons
+* Multi-select
+* Rename
+* Delete
+* Move
+* Copy
+* Download
+* Share
+* Upload
+* Create private storage folders/channels
 
-## Onboarding permissions
+The Files section represents the underlying Telegram storage directly while hiding internal implementation files.
 
-Before entering the app for the first time, the user must grant notification permission and disable battery optimization for TeleDrive. Each step verifies the real permission state and re-checks on resume, so simply opening system settings is not enough to proceed.
+### Settings
 
+Centralized controls for the entire application:
 
-## Telegram and TDLib
+* Account
+* Auto Backup
+* Downloads & Storage
+* Gallery
+* Files
+* Notifications
+* Privacy & Security
+* Biometric App Lock
+* Local FTP Access
+* Appearance
+* Application Information
 
-Flutter talks to `TelegramPlugin` through method/event channels. `TeleManager` uses the upstream `tdlibx` integration for:
+---
 
-- phone/code/2FA authentication and persistent sessions;
-- Saved Messages and writable channel discovery;
-- Telegram message history and media metadata;
-- document upload, progress events, on-demand download, and deletion;
-- private-channel creation/rename/removal;
-- thumbnail download and TDLib cache management.
+# Auto Backup
 
-Telegram API credentials are compiled into Android `BuildConfig`; they are never sent through Flutter UI or committed to source.
+Auto Backup allows local Android folders to be continuously mapped to specific Telegram storage destinations.
 
-Create `android/secrets.properties` for local builds:
+Each backup rule connects:
+
+**Local folder → Telegram destination**
+
+Destinations can be Saved Messages or a private Telegram channel.
+
+Rules can be:
+
+* Added
+* Edited
+* Enabled/disabled
+* Removed independently
+
+### Backup behaviour
+
+The monitor checks every enabled rule according to its configured frequency and whenever the application returns to the foreground.
+
+Previously uploaded files are detected using:
+
+* File path
+* File size
+* Last modified time
+
+Already processed files are skipped, preventing unnecessary re-uploads.
+
+Uploads use the same resumable chunked-upload system as normal uploads while preserving the original filename.
+
+Upload progress is displayed through the application's upload interface.
+
+### Backup constraints
+
+Each rule can respect:
+
+* Wi-Fi only
+* Mobile data allowed
+* Charging only
+
+Backup status displays:
+
+* Last backup time
+* Pending files
+* Last error
+* Current activity
+
+Android notifications can optionally be sent when a backup completes or fails.
+
+### Folder permissions
+
+Folder selection uses Android's system directory picker.
+
+If Android prevents TeleDrive from accessing a selected directory, the application reports the problem clearly instead of silently failing.
+
+Reliable background monitoring depends on Android battery-optimization settings. The onboarding flow guides the user through granting the required exemption.
+
+---
+
+# First-Run Setup
+
+Before entering the application for the first time, TeleDrive verifies the required Android permissions.
+
+The onboarding flow includes:
+
+1. Notification permission
+2. Battery-optimization exemption
+
+Every step checks the **actual system permission state**.
+
+Returning from Android Settings without granting the required permission does not bypass onboarding. Permission states are checked again whenever the application resumes.
+
+---
+
+# Telegram & TDLib Architecture
+
+TeleDrive communicates with native Android code through Flutter method and event channels.
+
+The native `TeleManager` layer handles the Telegram integration and provides:
+
+* Phone-number authentication
+* Login-code verification
+* Two-factor authentication
+* Persistent TDLib sessions
+* Saved Messages discovery
+* Writable channel discovery
+* Telegram message history
+* Media metadata
+* File uploads
+* Upload progress events
+* On-demand downloads
+* File deletion
+* Private-channel creation
+* Channel renaming and removal
+* Thumbnail downloads
+* TDLib cache management
+
+Flutter communicates with this native layer through `TelegramPlugin`.
+
+Telegram API credentials are supplied to the Android build through `BuildConfig`. They are not exposed through the Flutter UI and should never be committed to the repository.
+
+### Local development credentials
+
+Create:
+
+`android/secrets.properties`
 
 ```properties
 TELEGRAM_API_ID=123456
 TELEGRAM_API_HASH=your_api_hash
 ```
 
-CI may instead provide secret environment variables named `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`. `android/secrets.properties`, keystores, and signing properties are ignored by Git.
+For CI builds, the same credentials can be provided through environment variables:
 
-## Large and resumable files
+```text
+TELEGRAM_API_ID
+TELEGRAM_API_HASH
+```
 
-Files accepted by Telegram directly (up to 2 GiB in this backend) are not split. Larger files are streamed into 1900 MiB parts and uploaded sequentially as hidden Telegram documents.
+The following sensitive files remain outside Git:
 
-Each part caption records the upload UUID, original name/size/MIME type, part count, and zero-based order. After all parts finish, a JSON manifest document commits the virtual file. Completed part state is persisted after each upload. Retrying the same source resumes at the first missing/failed part rather than starting again.
+* `android/secrets.properties`
+* Keystores
+* Signing properties
 
-Downloads fetch each part on demand and stream them into one reconstructed file. The reconstructed byte count is checked against the original manifest. Gallery and Files always model the result as one normal file, including videos.
+---
 
-## FTP server
+# Large & Resumable Files
 
-Settings can start or stop a local-network FTP server and configure its username, encrypted password, and port. The screen shows live status, host, and port.
+Telegram-supported files are uploaded directly without splitting.
 
-The FTP root is backed by the same repository as Files:
+For files larger than the direct-upload limit, TeleDrive automatically creates sequential parts of approximately **1900 MiB**.
 
-- root directories are Saved Messages and writable Telegram channels;
-- `LIST`/`MLSD` return only user-facing Telegram files;
-- `RETR` lazily downloads the requested file;
-- `STOR`, `DELE`, `MKD`, `RMD`, and `RNFR`/`RNTO` modify Telegram-backed storage.
+Each part is stored as an internal Telegram document.
 
-The server does not create a local mirror. A requested download or in-progress upload may use TDLib/app temporary cache for that individual file. FTP is unencrypted and should only be enabled on a trusted local network; the server stops when the provider/app process is disposed.
+### Part metadata
 
-## Build
+Every part records:
 
-Requirements:
+* Upload UUID
+* Original filename
+* Original file size
+* MIME type
+* Total part count
+* Zero-based part index
 
-- Flutter stable
-- Android SDK
-- Java 17
-- Telegram API credentials from [my.telegram.org](https://my.telegram.org)
+Once every part has been uploaded, a JSON manifest commits the virtual file.
+
+The application persists completed-part state after every successful upload.
+
+If an upload is interrupted, retrying the same source resumes from the first missing or failed part instead of restarting the entire upload.
+
+### Downloads
+
+Large files are reconstructed on demand.
+
+TeleDrive:
+
+1. Downloads the required parts
+2. Streams them into a single output file
+3. Reconstructs the original file
+4. Verifies the resulting byte count against the manifest
+
+The rest of the application sees the reconstructed result as a normal file.
+
+This means Gallery and Files do not need to understand the underlying multipart implementation.
+
+---
+
+# Local FTP Server
+
+TeleDrive includes an optional FTP server for accessing Telegram-backed storage from devices on the same local network.
+
+The FTP settings allow configuration of:
+
+* Username
+* Encrypted password
+* Port
+* Server state
+
+The application displays the current host and port while the server is running.
+
+### FTP filesystem
+
+The FTP root mirrors the same repository used by Files.
+
+Root directories represent:
+
+* Saved Messages
+* Writable Telegram channels
+
+Supported operations include:
+
+* `LIST`
+* `MLSD`
+* `RETR`
+* `STOR`
+* `DELE`
+* `MKD`
+* `RMD`
+* `RNFR`
+* `RNTO`
+
+Only user-facing Telegram files are exposed.
+
+Internal chunks and manifest documents remain hidden.
+
+### Storage behaviour
+
+The FTP server does **not** maintain a permanent local copy of Telegram storage.
+
+Individual transfers may temporarily use application/TDLib cache while a file is being downloaded or uploaded.
+
+The FTP server automatically stops when its provider or application process is disposed.
+
+> **Security:** FTP is unencrypted. Only enable it on a trusted local network.
+
+---
+
+# Build
+
+## Requirements
+
+* Flutter stable
+* Android SDK
+* Java 17
+* Telegram API credentials
+
+Telegram API credentials can be obtained through [my.telegram.org](https://my.telegram.org?utm_source=chatgpt.com).
+
+## Install dependencies
 
 ```bash
 flutter pub get
+```
+
+## Run tests
+
+```bash
 flutter test
+```
+
+## Build release APK
+
+```bash
 flutter build apk --release
 ```
 
-When no release keystore is provided, Android uses the normal development-compatible signing behavior. For production signing, create `android/key.properties` with the standard `storeFile`, `storePassword`, `keyAlias`, and `keyPassword` fields. `codemagic.yaml` remains the CI build entry point.
+### Release signing
 
-## Platform scope
+If no release keystore is configured, Android uses its normal development-compatible signing behaviour.
 
-The inherited TDLib bridge is Android-specific. A native iOS TDLib implementation would be required before enabling the same backend on iOS.
+For production releases, create:
+
+`android/key.properties`
+
+with the standard:
+
+```properties
+storeFile=...
+storePassword=...
+keyAlias=...
+keyPassword=...
+```
+
+`codemagic.yaml` remains the CI build entry point.
+
+---
+
+# Security
+
+TeleDrive keeps sensitive Telegram credentials outside the Flutter layer.
+
+API credentials should:
+
+* Never be hard-coded into Dart source
+* Never be committed to Git
+* Never be exposed through application UI
+* Be supplied through local secret files or CI environment variables
+
+The FTP server should only be enabled on networks you trust because standard FTP does not provide transport encryption.
+
+---
+
+# Platform Support
+
+TeleDrive currently targets **Android**.
+
+The existing native TDLib bridge is Android-specific. Supporting iOS with the same architecture would require a separate native iOS TDLib implementation.
+
+---
+
+## Architecture at a Glance
+
+```text
+┌───────────────────────────────┐
+│          Flutter UI           │
+│                               │
+│  Gallery │ Files │ Settings   │
+└───────────────┬───────────────┘
+                │
+        Method / Event Channels
+                │
+┌───────────────▼───────────────┐
+│        TelegramPlugin         │
+├───────────────────────────────┤
+│         TeleManager           │
+├───────────────────────────────┤
+│            TDLib              │
+├───────────────────────────────┤
+│           Telegram            │
+└───────────────────────────────┘
+```
+
+The repository layer presents Telegram storage as a normal file system while transparently handling authentication, caching, uploads, downloads, multipart files, manifests, and internal storage metadata.
